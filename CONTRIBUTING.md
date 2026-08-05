@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for considering a contribution to minutegenius!
+Thanks for considering a contribution to MinuteGenius!
 
 ## Setup
 

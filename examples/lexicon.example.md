@@ -19,6 +19,7 @@
 - ARR: Annual Recurring Revenue
 
 ## Frequent phonetic mishearings
-- "Cubernète" / "Kubernetiss" → Kubernetes
-- "Api Aille" → API AI
+- "Cooper Net Ease" / "Cooper-net-ees" → Kubernetes
+- "Post Grey Sequel" → PostgreSQL
+- "Get Hub" → GitHub
 - "Alissa Dupont" / "Alice Dupond" → Alice Dupont

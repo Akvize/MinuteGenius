@@ -1,10 +1,10 @@
-# minutegenius
+# MinuteGenius
 
 **Turn a meeting recording into minutes someone actually wants to read.**
 
 Most transcription tools give you a wall of text: who said what, roughly, with
 the phonetic mistakes and filler words intact. That's a transcript, not a
-report. minutegenius produces something different — a structured,
+report. MinuteGenius produces something different — a structured,
 readable, *intelligent* account of the meeting: organized by topic (not by
 whoever spoke longest), attributed to the right person, cross-referenced with
 whatever was shared on screen, and corrected against your own vocabulary of
@@ -17,33 +17,46 @@ stakeholder can read top to bottom and actually understand what happened.
 
 ## Before / after
 
-A raw diarized transcript looks like this:
+The real value isn't just cleaning up a transcript — most of what's actually
+said in a meeting only makes sense together with whatever's on screen at that
+moment. Here's the raw material MinuteGenius works from: speech, interleaved
+with what the vision model saw on screen at each timestamp.
 
 ```
-[04:12] SPEAKER_00: yeah so the the ISN api uh the the latency issue
-we saw last week it's it's fixed on our end but the the client side
-integration still uh still needs the the retry logic
-[04:34] SPEAKER_01: ok and what's the timeline on that
+[04:12] 🖥  Two product photos side by side: the same pair of sneakers,
+            shot on a blue background (left) and a grey background (right).
+[04:15] SPEAKER_00: so you can see, the model performs a lot better
+        on the left background
+
+[08:40] 🖥  Line chart of the product's recognition rate over time,
+            climbing sharply from around August 2024 onward.
+[08:44] SPEAKER_01: yeah, you can really see the shift in 2024
 ```
 
-minutegenius, given a short lexicon of names/jargon, produces:
+Read on its own, "the model performs better on the left background" or "you
+can really see the shift in 2024" means nothing to someone who wasn't
+watching. MinuteGenius correlates what was said with what was projected at
+that exact moment, and writes it up as something self-contained:
 
 ```markdown
-### API latency issue
+### Model performance on product images
 
-Alice Dupont confirmed the latency issue reported last week has been
-fixed on their end. The client-side integration still needs retry logic
-before it can be considered resolved.
+Alice Dupont compared two photos of the same pair of sneakers — one shot
+against a blue background, one against grey — and noted the model performs
+noticeably better on the blue background.
 
-Bob Martin asked for a timeline on the remaining work.
+### Recognition rate trend
+
+Looking at a chart of the product's recognition rate over time, Bob Martin
+pointed out the sharp increase that started in August 2024.
 ```
 
-Same source material — but organized by topic, correctly attributed, and
-readable by someone who wasn't in the room.
+Same underlying material — but organized by topic, correctly attributed,
+and understandable by someone who never saw the screen share.
 
 ## How it works
 
-Given a meeting video, minutegenius runs a 6-step pipeline:
+Given a meeting video, MinuteGenius runs a 6-step pipeline:
 
 1. **Keyframe extraction** — samples the video and dedupes near-identical
    frames (perceptual hashing), so slides/shared screens are captured without

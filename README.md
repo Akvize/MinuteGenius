@@ -101,8 +101,7 @@ pipeline.
   ```
 - An API key for any OpenAI-compatible LLM endpoint (used for steps 2, 4 and
   6 — vision analysis, speaker ID, and write-up). Any provider works:
-  [Scaleway](https://www.scaleway.com/en/generative-apis/), OpenRouter, Groq,
-  a local Ollama/vLLM server, etc.
+  OpenRouter, Groq, a local Ollama/vLLM server, etc.
 
 ## Install
 

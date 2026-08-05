@@ -52,7 +52,7 @@ def analyze_frame(image_path: Path) -> dict:
 
     Retourne : {"shared_content": bool, "clearly_visible": str|null, "partially_visible": str|null}
     """
-    model = os.environ.get("AI_MODEL_IMAGE2") or os.environ.get("AI_MODEL_IMAGE", "qwen3.6-27b")
+    model = os.environ.get("AI_MODEL_IMAGE2") or os.environ["AI_MODEL_IMAGE"]
     image_b64 = base64.b64encode(image_path.read_bytes()).decode()
     ext = image_path.suffix.lstrip(".").lower()
     media_type = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
@@ -282,7 +282,7 @@ def identify_speaker(frames_by_time: list[list[Path]], known: dict[str, str]) ->
 
 def _identify_speaker_once(frames: list[Path], known: dict[str, str], attempt: int = 1) -> str | None:
     """Identifie un locuteur en envoyant ses frames en un seul appel vision."""
-    model = os.environ.get("AI_MODEL_IMAGE2") or os.environ.get("AI_MODEL_IMAGE", "qwen3.6-27b")
+    model = os.environ.get("AI_MODEL_IMAGE2") or os.environ["AI_MODEL_IMAGE"]
 
     valid_frames = [f for f in frames if f is not None and Path(f).exists()]
     if not valid_frames:
@@ -645,7 +645,7 @@ def _parse_report_blocks(report_path: Path) -> list[dict]:
 
 def _correct_block(transcription_lines: list[str], presented: str | None, lexicon: str) -> str:
     """Envoie un bloc de transcription au LLM pour correction."""
-    model = os.environ.get("AI_MODEL_WRITER", "deepseek-v4-flash")
+    model = os.environ["AI_MODEL_WRITER"]
 
     context_slide = (
         f"Contenu affiché à l'écran pendant cette séquence :\n{presented.strip()}\n\n"
@@ -696,7 +696,7 @@ def _correct_block(transcription_lines: list[str], presented: str | None, lexico
 
 def clean_report(report_path: Path, lexicon_path: Path, output_path: Path, max_blocks: int | None = None) -> None:
     """Génère un compte-rendu structuré en envoyant la timeline complète au LLM en un seul appel."""
-    model = os.environ.get("AI_MODEL_WRITER", "deepseek-v4-flash")
+    model = os.environ["AI_MODEL_WRITER"]
     lexicon = lexicon_path.read_text(encoding="utf-8")
     timeline = report_path.read_text(encoding="utf-8")
 

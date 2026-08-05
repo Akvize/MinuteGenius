@@ -17,42 +17,47 @@ stakeholder can read top to bottom and actually understand what happened.
 
 ## Before / after
 
-The real value isn't just cleaning up a transcript — most of what's actually
-said in a meeting only makes sense together with whatever's on screen at that
-moment. Here's the raw material MinuteGenius works from: speech, interleaved
-with what the vision model saw on screen at each timestamp.
+The raw material MinuteGenius works from is two separate, messy things: the
+diarized speech (full of filler words and false starts, and blind to
+anything visual), and — independently — a factual description of whatever
+was on screen at that moment (from the vision model, not from anyone
+describing it out loud). Neither one alone is a report. For example, the
+speech track alone might contain just this:
 
 ```
-[04:12] 🖥  Two product photos side by side: the same pair of sneakers,
-            shot on a blue background (left) and a grey background (right).
-[04:15] SPEAKER_00: so you can see, the model performs a lot better
-        on the left background
-
-[08:40] 🖥  Line chart of the product's recognition rate over time,
-            climbing sharply from around August 2024 onward.
-[08:44] SPEAKER_01: yeah, you can really see the shift in 2024
+[03:14] SPEAKER_00: so yeah this is kind of the the starting point uh
+the the initial dashboard uh so you can step back before before going
+into the detail
 ```
 
-Read on its own, "the model performs better on the left background" or "you
-can really see the shift in 2024" means nothing to someone who wasn't
-watching. MinuteGenius correlates what was said with what was projected at
-that exact moment, and writes it up as something self-contained:
+That line means nothing on its own — "the initial dashboard" showing what?
+Separately, for that same moment, the vision model produced this from the
+shared screen:
+
+```
+[03:10] 🖥  Dashboard. KPIs shown: "On-time deliveries: 48.5%",
+            "Average receipt lead time: 77.3 days". Charts breaking down
+            purchase orders (PO) and work orders (WO) by status, plus a
+            list of packing lists (PKL) pending validation.
+```
+
+MinuteGenius merges the two — matching what was said to what was on screen
+at that exact timestamp — and writes it up as one coherent paragraph that
+keeps the actual figures and labels, not a paraphrase of them:
 
 ```markdown
-### Model performance on product images
+### Initial dashboard walkthrough
 
-Alice Dupont compared two photos of the same pair of sneakers — one shot
-against a blue background, one against grey — and noted the model performs
-noticeably better on the blue background.
-
-### Recognition rate trend
-
-Looking at a chart of the product's recognition rate over time, Bob Martin
-pointed out the sharp increase that started in August 2024.
+Alice Dupont opened with the home screen, presented as an "initial
+dashboard" meant to give a step-back view before diving into detail. It
+displayed KPIs such as on-time deliveries at 48.5% and an average receipt
+lead time of 77.3 days, along with charts breaking down purchase orders
+(PO) and work orders (WO), and a list of packing lists (PKL) pending
+validation.
 ```
 
-Same underlying material — but organized by topic, correctly attributed,
-and understandable by someone who never saw the screen share.
+Without the screen content, this paragraph couldn't exist — the speech
+alone never states what the dashboard actually showed.
 
 ## How it works
 

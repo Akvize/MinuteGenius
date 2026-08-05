@@ -1,0 +1,222 @@
+"""
+Transcription + diarisation avec WhisperKit.
+Usage: python transcribe.py [--audio audio.wav] [--speakers 4] [--language fr]
+"""
+import argparse
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
+
+
+@dataclass
+class Segment:
+    start: float
+    end: float
+    speaker: str
+    text: str
+
+
+def spinner(stop_event: threading.Event):
+    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    i = 0
+    start = time.time()
+    while not stop_event.is_set():
+        elapsed = int(time.time() - start)
+        m, s = divmod(elapsed, 60)
+        print(f"\r  {frames[i % len(frames)]}  En cours... {m:02d}:{s:02d}", end="", flush=True)
+        i += 1
+        time.sleep(0.1)
+    print("\r" + " " * 30 + "\r", end="", flush=True)
+
+
+def check_ffmpeg():
+    if shutil.which("ffmpeg") is None:
+        print("Erreur : ffmpeg est requis pour convertir les fichiers audio/vidéo.")
+        print("Installe-le avec : brew install ffmpeg")
+        sys.exit(1)
+
+
+def extract_audio(input_path: Path) -> Path:
+    check_ffmpeg()
+    wav_path = input_path.with_suffix(".wav")
+    print(f"Extraction audio de {input_path.name} → {wav_path.name}...")
+    cmd = [
+        "ffmpeg", "-y", "-i", str(input_path),
+        "-vn", "-ar", "16000", "-ac", "1",
+        str(wav_path)
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Erreur ffmpeg :\n{result.stderr[-500:]}", file=sys.stderr)
+        sys.exit(1)
+    print(f"  → {wav_path.name} ({wav_path.stat().st_size // 1024 // 1024} Mo)\n")
+    return wav_path
+
+
+def resolve_audio(input_path: Path) -> Path:
+    suffix = input_path.suffix.lower()
+    if suffix in AUDIO_EXTENSIONS:
+        return input_path
+    if suffix in VIDEO_EXTENSIONS:
+        return extract_audio(input_path)
+    print(f"Erreur : format '{suffix}' non supporté.")
+    print(f"Formats acceptés : {', '.join(sorted(AUDIO_EXTENSIONS | VIDEO_EXTENSIONS))}")
+    sys.exit(1)
+
+
+def run_whisperkit(audio_path: Path, language: str, num_speakers: int | None, model: str | None) -> str:
+    cmd = [
+        "whisperkit-cli", "transcribe",
+        "--audio-path", str(audio_path),
+        "--language", language,
+        "--diarization",
+        "--skip-special-tokens",
+    ]
+    if model:
+        cmd += ["--model", model]
+    if num_speakers:
+        cmd += ["--diarization-num-speakers", str(num_speakers)]
+
+    print(f"Transcription de {audio_path.name}...")
+    stop = threading.Event()
+    t = threading.Thread(target=spinner, args=(stop,), daemon=True)
+    t.start()
+
+    t_start = time.time()
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    elapsed = time.time() - t_start
+
+    stop.set()
+    t.join()
+
+    if result.returncode != 0:
+        print(result.stderr[-500:], file=sys.stderr)
+        sys.exit(1)
+
+    m, s = divmod(int(elapsed), 60)
+    print(f"  Terminé en {m:02d}:{s:02d}")
+    return result.stdout
+
+
+def _find_start_idx(parts: list[str]) -> int | None:
+    """Trouve l'index du premier float dans deux floats consécutifs (start + duration).
+
+    Robuste aux noms de fichier avec espaces : on ne suppose pas de position fixe.
+    """
+    for i in range(1, len(parts) - 4):
+        try:
+            if "." not in parts[i] or "." not in parts[i + 1]:
+                continue
+            float(parts[i])
+            float(parts[i + 1])
+            return i
+        except (ValueError, IndexError):
+            continue
+    return None
+
+
+def parse_diarization_output(raw: str) -> list[Segment]:
+    """
+    Parse le format WhisperKit :
+    SPEAKER <file (peut avoir des espaces)> <ch> <start> <dur> <text> <NA> <label> <NA> <NA>
+    """
+    segments = []
+    for line in raw.splitlines():
+        if not line.startswith("SPEAKER"):
+            continue
+        parts = line.split()
+        if len(parts) < 9:
+            continue
+        start_idx = _find_start_idx(parts)
+        if start_idx is None:
+            continue
+        try:
+            start = float(parts[start_idx])
+            duration = float(parts[start_idx + 1])
+            end = start + duration
+            speaker = parts[-3]
+            text = " ".join(parts[start_idx + 2:-4]).strip()
+            text = text.replace(" '", "'")
+            segments.append(Segment(start=start, end=end, speaker=speaker, text=text))
+        except (ValueError, IndexError):
+            continue
+
+    return sorted(segments, key=lambda s: s.start)
+
+
+def format_timestamp_short(seconds: float) -> str:
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    if h > 0:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+
+def write_txt(segments: list[Segment], output: Path, speakers_map: dict[str, str]):
+    lines = []
+    prev_speaker = None
+    for seg in segments:
+        label = speakers_map.get(seg.speaker, f"Speaker {seg.speaker}")
+        if seg.speaker != prev_speaker:
+            lines.append(f"\n[{format_timestamp_short(seg.start)} → {format_timestamp_short(seg.end)}] {label}")
+            prev_speaker = seg.speaker
+        else:
+            lines.append(f"[{format_timestamp_short(seg.start)} → {format_timestamp_short(seg.end)}]")
+        lines.append(seg.text)
+    output.write_text("\n".join(lines).strip())
+    print(f"  → {output} ({output.stat().st_size:,} octets)")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--audio", default="audio.wav")
+    parser.add_argument("--output", default="transcript.txt")
+    parser.add_argument("--language", default="fr")
+    parser.add_argument("--speakers", type=int, default=None,
+                        help="Nombre de locuteurs (auto si non spécifié)")
+    parser.add_argument("--model", default=None,
+                        help="Modèle Whisper (auto si non spécifié)")
+    parser.add_argument("--speakers-map", default=None,
+                        help="Noms des locuteurs, ex: \"A:Mickael,B:Slimane\"")
+    args = parser.parse_args()
+
+    input_path = Path(args.audio)
+    if not input_path.exists():
+        print(f"Fichier introuvable : {input_path}")
+        sys.exit(1)
+
+    speakers_map = {}
+    if args.speakers_map:
+        for pair in args.speakers_map.split(","):
+            key, _, name = pair.partition(":")
+            speakers_map[key.strip()] = name.strip()
+
+    audio_path = resolve_audio(input_path)
+    raw = run_whisperkit(audio_path, args.language, args.speakers, args.model)
+    segments = parse_diarization_output(raw)
+
+    if not segments:
+        print("Aucun segment parsé — sortie brute :")
+        print(raw)
+        sys.exit(1)
+
+    print(f"\n{len(segments)} segments, {len(set(s.speaker for s in segments))} locuteurs détectés\n")
+
+    out = Path(args.output)
+    if out.is_dir():
+        txt_path = out / input_path.with_suffix(".txt").name
+    else:
+        txt_path = out.with_suffix(".txt")
+    write_txt(segments, txt_path, speakers_map)
+
+
+if __name__ == "__main__":
+    main()

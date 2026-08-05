@@ -32,8 +32,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Akvize/minutegenius"
-Issues = "https://github.com/Akvize/minutegenius/issues"
+Homepage = "https://github.com/Akvize/MinuteGenius"
+Issues = "https://github.com/Akvize/MinuteGenius/issues"
 
 [project.scripts]
 minutegenius = "minutegenius.cli:main"

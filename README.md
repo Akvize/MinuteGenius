@@ -107,7 +107,7 @@ pipeline.
 ## Install
 
 ```bash
-git clone https://github.com/Akvize/minutegenius
+git clone https://github.com/Akvize/MinuteGenius
 cd minutegenius
 uv sync
 cp .env.example .env   # fill in AI_API / AI_KEY

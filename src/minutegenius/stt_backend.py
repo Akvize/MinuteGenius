@@ -81,3 +81,28 @@ def format_as_whisperkit_lines(segments: list[Segment], audio_filename: str) -> 
             f"SPEAKER {audio_filename} 1 {seg.start:.3f} {duration:.3f} {text} NA {seg.speaker} NA NA"
         )
     return "\n".join(lines)
+
+
+def merge_diarization_transcript(diarization: list[dict], transcript_segments: list[dict]) -> list[Segment]:
+    """Associe à chaque segment de transcript le locuteur dont le tour de parole
+    chevauche le plus (fallback : locuteur le plus proche par milieu de segment)."""
+    merged = []
+    for ts in transcript_segments:
+        text = ts["text"].strip()
+        if not text:
+            continue
+
+        best_speaker, best_overlap = None, 0.0
+        for turn in diarization:
+            overlap = min(turn["end"], ts["end"]) - max(turn["start"], ts["start"])
+            if overlap > best_overlap:
+                best_overlap, best_speaker = overlap, turn["speaker"]
+
+        if best_speaker is None and diarization:
+            mid = (ts["start"] + ts["end"]) / 2
+            best_speaker = min(
+                diarization, key=lambda t: abs((t["start"] + t["end"]) / 2 - mid)
+            )["speaker"]
+
+        merged.append(Segment(start=ts["start"], end=ts["end"], speaker=best_speaker or "SPEAKER_00", text=text))
+    return merged

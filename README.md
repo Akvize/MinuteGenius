@@ -71,7 +71,8 @@ Given a meeting video, MinuteGenius runs a 6-step pipeline:
    video-call chrome (participant tiles, names, toolbars).
 3. **Transcription + diarization** — [WhisperKit](https://github.com/argmaxinc/WhisperKit)
    runs fully on-device (CoreML / Neural Engine) to transcribe and separate
-   speakers.
+   speakers on Mac; falls back to a cloud path (OpenAI Whisper + pyannote.ai)
+   elsewhere — see Requirements.
 4. **Speaker identification** — for each detected speaker, the vision model
    looks at frames from their longest speaking turns to put a name on them
    (lip movement + who the call UI highlights), with an interactive
@@ -94,9 +95,14 @@ pipeline.
   Engine, but it's macOS-only. On Windows, Linux, or an Intel Mac,
   MinuteGenius automatically falls back to a cloud transcription+diarization
   path instead — see "Windows / Linux (no WhisperKit)" below.
-- `ffmpeg` and [`whisperkit-cli`](https://github.com/argmaxinc/WhisperKit):
+- `ffmpeg` (required on every platform):
   ```bash
-  brew install ffmpeg whisperkit-cli
+  brew install ffmpeg   # macOS
+  # or apt install ffmpeg / your OS's package manager on Linux/Windows
+  ```
+- [`whisperkit-cli`](https://github.com/argmaxinc/WhisperKit) (macOS only, optional — enables the fast on-device path; skip it to use the cloud fallback):
+  ```bash
+  brew install whisperkit-cli
   ```
 - An API key for any OpenAI-compatible LLM endpoint (used for steps 2, 4 and
   6 — vision analysis, speaker ID, and write-up). Any provider works:

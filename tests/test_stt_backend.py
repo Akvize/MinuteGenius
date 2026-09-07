@@ -205,6 +205,7 @@ def test_prepare_upload_audio_invokes_ffmpeg_with_low_bitrate_mono(monkeypatch, 
     cmd = calls[0]
     assert "-ac" in cmd and cmd[cmd.index("-ac") + 1] == "1"
     assert "-b:a" in cmd and cmd[cmd.index("-b:a") + 1] == "24k"
+    assert "-ar" in cmd and cmd[cmd.index("-ar") + 1] == "16000"
 
 
 def test_split_audio_if_needed_returns_single_chunk_for_short_audio(monkeypatch, tmp_path):
@@ -285,6 +286,8 @@ def test_transcribe_audio_falls_back_to_cloud_when_whisperkit_missing(monkeypatc
 
 
 def test_transcribe_cloud_wires_whisper_and_pyannote_through_merge_and_format(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("PYANNOTE_API_KEY", "test-key")
     audio_path = tmp_path / "audio.wav"
     audio_path.write_bytes(b"fake")
 
@@ -301,3 +304,13 @@ def test_transcribe_cloud_wires_whisper_and_pyannote_through_merge_and_format(mo
 
     assert "SPEAKER_00" in raw
     assert "hello" in raw
+
+
+def test_transcribe_cloud_exits_cleanly_when_api_keys_missing(monkeypatch, tmp_path):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("PYANNOTE_API_KEY", raising=False)
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"fake")
+
+    with pytest.raises(SystemExit):
+        stt_backend.transcribe_cloud(audio_path, "fr", None)

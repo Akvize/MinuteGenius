@@ -711,7 +711,7 @@ def _get_openai_whisper_client() -> OpenAI:
 
 def _prepare_upload_audio(audio_path: Path, temp_dir: Path) -> Path:
     """Réencode en MP3 mono basse résolution : format accepté par l'API OpenAI,
-    taille prévisible (~3.6MB/heure), suffisant pour de la voix."""
+    taille prévisible (~10.8MB/heure), suffisant pour de la voix."""
     mp3_path = temp_dir / f"{audio_path.stem}_upload.mp3"
     cmd = [
         "ffmpeg", "-y", "-i", str(audio_path),

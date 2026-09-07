@@ -1,5 +1,5 @@
 """
-Transcription + diarisation avec WhisperKit.
+Transcription + diarisation avec WhisperKit (ou fallback cloud : OpenAI Whisper + pyannote.ai).
 Usage: python transcribe.py [--audio audio.wav] [--speakers 4] [--language fr]
 """
 import argparse
@@ -17,7 +17,7 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 def check_ffmpeg():
     if shutil.which("ffmpeg") is None:
         print("Erreur : ffmpeg est requis pour convertir les fichiers audio/vidéo.")
-        print("Installe-le avec : brew install ffmpeg")
+        print("Installe-le avec : brew install ffmpeg (macOS) ou le gestionnaire de paquets de ton OS (Linux/Windows).")
         sys.exit(1)
 
 

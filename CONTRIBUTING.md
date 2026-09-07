@@ -33,5 +33,5 @@ discussion first.
 
 Please include:
 - OS/chip (macOS version, Apple Silicon vs Intel)
-- `whisperkit-cli --version` and `ffmpeg -version`
+- `whisperkit-cli --version` (if installed) and `ffmpeg -version`
 - The exact command you ran and the full error output

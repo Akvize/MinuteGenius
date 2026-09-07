@@ -844,7 +844,7 @@ def main():
         print(f"  → {analyzed_json}")
     print()
 
-    # Étape 3 — transcription avec WhisperKit
+    # Étape 3 — transcription (WhisperKit ou fallback cloud)
     transcript_raw = output_dir / f"{video_path.stem}_transcript_raw.txt"
     if transcript_raw.exists():
         print("Étape 3 : transcription déjà effectuée, chargement...")

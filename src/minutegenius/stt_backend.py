@@ -14,7 +14,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 from openai import OpenAI
+
+load_dotenv()
 
 
 @dataclass
@@ -117,6 +120,8 @@ def merge_diarization_transcript(diarization: list[dict], transcript_segments: l
 PYANNOTE_BASE_URL = "https://api.pyannote.ai/v1"
 PYANNOTE_POLL_INTERVAL_S = 5
 PYANNOTE_POLL_TIMEOUT_S = 1800  # 30 min
+PYANNOTE_HTTP_TIMEOUT_S = 30
+PYANNOTE_UPLOAD_TIMEOUT_S = 600  # generous — uploads the full original audio file
 
 
 def _pyannote_headers() -> dict:
@@ -128,19 +133,23 @@ def diarize_pyannote(audio_path: Path, num_speakers: int | None) -> list[dict]:
     media_key = f"media://minutegenius-{uuid.uuid4().hex}"
 
     resp = requests.post(
-        f"{PYANNOTE_BASE_URL}/media/input", json={"url": media_key}, headers=_pyannote_headers()
+        f"{PYANNOTE_BASE_URL}/media/input", json={"url": media_key}, headers=_pyannote_headers(),
+        timeout=PYANNOTE_HTTP_TIMEOUT_S,
     )
     resp.raise_for_status()
     upload_url = resp.json()["url"]
 
     with open(audio_path, "rb") as f:
-        put_resp = requests.put(upload_url, data=f)
+        put_resp = requests.put(upload_url, data=f, timeout=PYANNOTE_UPLOAD_TIMEOUT_S)
     put_resp.raise_for_status()
 
     body: dict = {"url": media_key}
     if num_speakers:
         body["numSpeakers"] = num_speakers
-    resp = requests.post(f"{PYANNOTE_BASE_URL}/diarize", json=body, headers=_pyannote_headers())
+    resp = requests.post(
+        f"{PYANNOTE_BASE_URL}/diarize", json=body, headers=_pyannote_headers(),
+        timeout=PYANNOTE_HTTP_TIMEOUT_S,
+    )
     resp.raise_for_status()
     job_id = resp.json()["jobId"]
 
@@ -151,7 +160,10 @@ def diarize_pyannote(audio_path: Path, num_speakers: int | None) -> list[dict]:
 def _poll_pyannote_job(job_id: str) -> list[dict]:
     deadline = time.time() + PYANNOTE_POLL_TIMEOUT_S
     while time.time() < deadline:
-        resp = requests.get(f"{PYANNOTE_BASE_URL}/jobs/{job_id}", headers=_pyannote_headers())
+        resp = requests.get(
+            f"{PYANNOTE_BASE_URL}/jobs/{job_id}", headers=_pyannote_headers(),
+            timeout=PYANNOTE_HTTP_TIMEOUT_S,
+        )
         resp.raise_for_status()
         job = resp.json()
         status = job["status"]
@@ -177,13 +189,22 @@ def _get_openai_whisper_client() -> OpenAI:
     return _openai_client
 
 
+def _require_cloud_env_vars() -> None:
+    """Vérifie les clés cloud avant toute dépense (ffmpeg, appels réseau, API payantes)."""
+    missing = [name for name in ("OPENAI_API_KEY", "PYANNOTE_API_KEY") if not os.environ.get(name)]
+    if missing:
+        print(f"Erreur : variable(s) d'environnement manquante(s) : {', '.join(missing)}", file=sys.stderr)
+        print("Configure-les dans .env (voir .env.example) avant de relancer.", file=sys.stderr)
+        sys.exit(1)
+
+
 def _prepare_upload_audio(audio_path: Path, temp_dir: Path) -> Path:
     """Réencode en MP3 mono basse résolution : format accepté par l'API OpenAI,
-    taille prévisible (~3.6MB/heure), suffisant pour de la voix."""
+    taille prévisible (~10.8MB/heure), suffisant pour de la voix."""
     mp3_path = temp_dir / f"{audio_path.stem}_upload.mp3"
     cmd = [
         "ffmpeg", "-y", "-i", str(audio_path),
-        "-ac", "1", "-b:a", f"{OPENAI_UPLOAD_BITRATE_KBPS}k",
+        "-ac", "1", "-ar", "16000", "-b:a", f"{OPENAI_UPLOAD_BITRATE_KBPS}k",
         str(mp3_path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -242,12 +263,13 @@ def transcribe_openai_whisper(audio_path: Path, language: str, temp_dir: Path) -
             )
         segments += [
             {"start": seg.start + offset, "end": seg.end + offset, "text": seg.text}
-            for seg in response.segments
+            for seg in (response.segments or [])
         ]
     return segments
 
 
 def transcribe_cloud(audio_path: Path, language: str, num_speakers: int | None) -> str:
+    _require_cloud_env_vars()
     print("whisperkit-cli introuvable — bascule sur le fallback cloud (OpenAI Whisper + pyannote.ai)...")
     with tempfile.TemporaryDirectory() as tmp:
         temp_dir = Path(tmp)
@@ -256,6 +278,9 @@ def transcribe_cloud(audio_path: Path, language: str, num_speakers: int | None) 
         diarization = diarize_pyannote(audio_path, num_speakers)
 
     segments = merge_diarization_transcript(diarization, transcript_segments)
+    if not segments:
+        print("Erreur : aucun segment de transcription obtenu (audio vide ou silencieux ?).", file=sys.stderr)
+        sys.exit(1)
     return format_as_whisperkit_lines(segments, audio_path.name)
 
 

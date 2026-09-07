@@ -1,4 +1,5 @@
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -164,3 +165,102 @@ def test_diarize_pyannote_raises_on_job_failure(monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError):
         stt_backend.diarize_pyannote(audio_path, num_speakers=None)
+
+
+class _FakeSegment:
+    def __init__(self, start, end, text):
+        self.start, self.end, self.text = start, end, text
+
+
+class _FakeTranscriptionResponse:
+    def __init__(self, segments):
+        self.segments = segments
+
+
+class _FakeAudioTranscriptions:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = []
+
+    def create(self, model, file, language, response_format):
+        self.calls.append({"model": model, "language": language, "response_format": response_format})
+        return self._responses.pop(0)
+
+
+def test_prepare_upload_audio_invokes_ffmpeg_with_low_bitrate_mono(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(cmd, capture_output, text):
+        calls.append(cmd)
+        Path(cmd[-1]).write_bytes(b"fake mp3")
+        return type("R", (), {"returncode": 0, "stderr": ""})()
+
+    monkeypatch.setattr(stt_backend.subprocess, "run", fake_run)
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"fake wav")
+
+    out_path = stt_backend._prepare_upload_audio(audio_path, tmp_path)
+
+    assert out_path.exists()
+    cmd = calls[0]
+    assert "-ac" in cmd and cmd[cmd.index("-ac") + 1] == "1"
+    assert "-b:a" in cmd and cmd[cmd.index("-b:a") + 1] == "24k"
+
+
+def test_split_audio_if_needed_returns_single_chunk_for_short_audio(monkeypatch, tmp_path):
+    monkeypatch.setattr(stt_backend, "_probe_duration", lambda path: 60.0)
+    mp3_path = tmp_path / "audio_upload.mp3"
+    mp3_path.write_bytes(b"fake")
+
+    chunks = stt_backend._split_audio_if_needed(mp3_path, tmp_path)
+
+    assert chunks == [(mp3_path, 0.0)]
+
+
+def test_split_audio_if_needed_splits_long_audio(monkeypatch, tmp_path):
+    monkeypatch.setattr(stt_backend, "_probe_duration", lambda path: 3 * stt_backend.OPENAI_CHUNK_SECONDS)
+
+    def fake_run(cmd, capture_output, text):
+        for i in range(3):
+            (tmp_path / f"audio_upload_chunk_{i:03d}.mp3").write_bytes(b"fake")
+        return type("R", (), {"returncode": 0, "stderr": ""})()
+
+    monkeypatch.setattr(stt_backend.subprocess, "run", fake_run)
+    mp3_path = tmp_path / "audio_upload.mp3"
+    mp3_path.write_bytes(b"fake")
+
+    chunks = stt_backend._split_audio_if_needed(mp3_path, tmp_path)
+
+    assert len(chunks) == 3
+    assert [offset for _, offset in chunks] == [0.0, stt_backend.OPENAI_CHUNK_SECONDS, 2 * stt_backend.OPENAI_CHUNK_SECONDS]
+
+
+def test_transcribe_openai_whisper_offsets_segments_across_chunks(monkeypatch, tmp_path):
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"fake")
+
+    fake_client = _FakeAudioTranscriptions([
+        _FakeTranscriptionResponse([_FakeSegment(0.0, 1.0, "chunk one")]),
+        _FakeTranscriptionResponse([_FakeSegment(0.0, 1.0, "chunk two")]),
+    ])
+
+    class _FakeClient:
+        class audio:
+            transcriptions = fake_client
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(stt_backend, "_get_openai_whisper_client", lambda: _FakeClient())
+    monkeypatch.setattr(stt_backend, "_prepare_upload_audio", lambda path, tmp: tmp_path / "audio_upload.mp3")
+    monkeypatch.setattr(
+        stt_backend, "_split_audio_if_needed",
+        lambda mp3_path, tmp: [(tmp_path / "chunk0.mp3", 0.0), (tmp_path / "chunk1.mp3", 100.0)],
+    )
+    for name in ("chunk0.mp3", "chunk1.mp3"):
+        (tmp_path / name).write_bytes(b"fake")
+
+    segments = stt_backend.transcribe_openai_whisper(audio_path, "fr", tmp_path)
+
+    assert segments == [
+        {"start": 0.0, "end": 1.0, "text": "chunk one"},
+        {"start": 100.0, "end": 101.0, "text": "chunk two"},
+    ]

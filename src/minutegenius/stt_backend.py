@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import requests
+from openai import OpenAI
 
 
 @dataclass
@@ -160,3 +161,86 @@ def _poll_pyannote_job(job_id: str) -> list[dict]:
             raise RuntimeError(f"Job pyannote.ai {job_id} : statut {status} ({error})")
         time.sleep(PYANNOTE_POLL_INTERVAL_S)
     raise TimeoutError(f"Job pyannote.ai {job_id} n'a pas terminé après {PYANNOTE_POLL_TIMEOUT_S}s")
+
+
+OPENAI_CHUNK_SECONDS = 7200  # 2h — 24kbps mono MP3 stays well under the 25MB API limit
+OPENAI_UPLOAD_BITRATE_KBPS = 24
+
+_openai_client: OpenAI | None = None
+
+
+def _get_openai_whisper_client() -> OpenAI:
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    return _openai_client
+
+
+def _prepare_upload_audio(audio_path: Path, temp_dir: Path) -> Path:
+    """Réencode en MP3 mono basse résolution : format accepté par l'API OpenAI,
+    taille prévisible (~3.6MB/heure), suffisant pour de la voix."""
+    mp3_path = temp_dir / f"{audio_path.stem}_upload.mp3"
+    cmd = [
+        "ffmpeg", "-y", "-i", str(audio_path),
+        "-ac", "1", "-b:a", f"{OPENAI_UPLOAD_BITRATE_KBPS}k",
+        str(mp3_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stderr[-500:], file=sys.stderr)
+        sys.exit(1)
+    return mp3_path
+
+
+def _probe_duration(audio_path: Path) -> float:
+    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(audio_path)]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stderr[-500:], file=sys.stderr)
+        sys.exit(1)
+    return float(result.stdout.strip())
+
+
+def _split_audio_if_needed(mp3_path: Path, temp_dir: Path) -> list[tuple[Path, float]]:
+    """Découpe en morceaux de OPENAI_CHUNK_SECONDS si l'audio dépasse cette durée.
+    Retourne [(chemin_du_morceau, offset_en_secondes), ...]."""
+    duration = _probe_duration(mp3_path)
+    if duration <= OPENAI_CHUNK_SECONDS:
+        return [(mp3_path, 0.0)]
+
+    pattern = temp_dir / f"{mp3_path.stem}_chunk_%03d.mp3"
+    cmd = [
+        "ffmpeg", "-y", "-i", str(mp3_path),
+        "-f", "segment", "-segment_time", str(OPENAI_CHUNK_SECONDS),
+        "-c", "copy", str(pattern),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stderr[-500:], file=sys.stderr)
+        sys.exit(1)
+
+    chunks = sorted(temp_dir.glob(f"{mp3_path.stem}_chunk_*.mp3"))
+    return [(chunk, i * OPENAI_CHUNK_SECONDS) for i, chunk in enumerate(chunks)]
+
+
+def transcribe_openai_whisper(audio_path: Path, language: str, temp_dir: Path) -> list[dict]:
+    """Transcrit via l'API OpenAI Whisper. Retourne [{start, end, text}, ...] avec
+    les timestamps ramenés à l'échelle du fichier d'origine (offsets de chunk inclus)."""
+    mp3_path = _prepare_upload_audio(audio_path, temp_dir)
+    chunks = _split_audio_if_needed(mp3_path, temp_dir)
+
+    segments: list[dict] = []
+    for chunk_path, offset in chunks:
+        print(f"  Transcription OpenAI Whisper ({chunk_path.name})...")
+        with open(chunk_path, "rb") as f:
+            response = _get_openai_whisper_client().audio.transcriptions.create(
+                model="whisper-1",
+                file=f,
+                language=language,
+                response_format="verbose_json",
+            )
+        segments += [
+            {"start": seg.start + offset, "end": seg.end + offset, "text": seg.text}
+            for seg in response.segments
+        ]
+    return segments

@@ -68,3 +68,16 @@ def run_whisperkit(audio_path: Path, language: str, num_speakers: int | None, mo
     m, s = divmod(int(elapsed), 60)
     print(f"  Terminé en {m:02d}:{s:02d}")
     return result.stdout
+
+
+def format_as_whisperkit_lines(segments: list[Segment], audio_filename: str) -> str:
+    """Sérialise des segments au format texte brut de WhisperKit, pour rester
+    compatible avec parse_diarization_output()/_parse_speaker_line() existants."""
+    lines = []
+    for seg in segments:
+        text = " ".join(seg.text.split())
+        duration = seg.end - seg.start
+        lines.append(
+            f"SPEAKER {audio_filename} 1 {seg.start:.3f} {duration:.3f} {text} NA {seg.speaker} NA NA"
+        )
+    return "\n".join(lines)

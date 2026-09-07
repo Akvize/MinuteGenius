@@ -2,13 +2,17 @@
 Backend de transcription : WhisperKit (local, Mac) si disponible, sinon
 fallback cloud (OpenAI Whisper + pyannote.ai) — voir transcribe_cloud().
 """
+import os
 import shutil
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
+
+import requests
 
 
 @dataclass
@@ -106,3 +110,53 @@ def merge_diarization_transcript(diarization: list[dict], transcript_segments: l
 
         merged.append(Segment(start=ts["start"], end=ts["end"], speaker=best_speaker or "SPEAKER_00", text=text))
     return merged
+
+
+PYANNOTE_BASE_URL = "https://api.pyannote.ai/v1"
+PYANNOTE_POLL_INTERVAL_S = 5
+PYANNOTE_POLL_TIMEOUT_S = 1800  # 30 min
+
+
+def _pyannote_headers() -> dict:
+    return {"Authorization": f"Bearer {os.environ['PYANNOTE_API_KEY']}"}
+
+
+def diarize_pyannote(audio_path: Path, num_speakers: int | None) -> list[dict]:
+    """Diarise un fichier audio via pyannote.ai. Retourne [{start, end, speaker}, ...]."""
+    media_key = f"media://minutegenius-{uuid.uuid4().hex}"
+
+    resp = requests.post(
+        f"{PYANNOTE_BASE_URL}/media/input", json={"url": media_key}, headers=_pyannote_headers()
+    )
+    resp.raise_for_status()
+    upload_url = resp.json()["url"]
+
+    with open(audio_path, "rb") as f:
+        put_resp = requests.put(upload_url, data=f)
+    put_resp.raise_for_status()
+
+    body: dict = {"url": media_key}
+    if num_speakers:
+        body["numSpeakers"] = num_speakers
+    resp = requests.post(f"{PYANNOTE_BASE_URL}/diarize", json=body, headers=_pyannote_headers())
+    resp.raise_for_status()
+    job_id = resp.json()["jobId"]
+
+    diarization = _poll_pyannote_job(job_id)
+    return [{"start": t["start"], "end": t["end"], "speaker": t["speaker"]} for t in diarization]
+
+
+def _poll_pyannote_job(job_id: str) -> list[dict]:
+    deadline = time.time() + PYANNOTE_POLL_TIMEOUT_S
+    while time.time() < deadline:
+        resp = requests.get(f"{PYANNOTE_BASE_URL}/jobs/{job_id}", headers=_pyannote_headers())
+        resp.raise_for_status()
+        job = resp.json()
+        status = job["status"]
+        if status == "succeeded":
+            return job["output"]["diarization"]
+        if status in ("failed", "canceled"):
+            error = job.get("output", {}).get("error", "raison inconnue")
+            raise RuntimeError(f"Job pyannote.ai {job_id} : statut {status} ({error})")
+        time.sleep(PYANNOTE_POLL_INTERVAL_S)
+    raise TimeoutError(f"Job pyannote.ai {job_id} n'a pas terminé après {PYANNOTE_POLL_TIMEOUT_S}s")

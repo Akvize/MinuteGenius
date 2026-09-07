@@ -1,5 +1,7 @@
 import shutil
 
+import pytest
+
 from minutegenius import stt_backend
 from minutegenius.stt_backend import Segment, format_as_whisperkit_lines, merge_diarization_transcript
 from minutegenius.transcribe import parse_diarization_output
@@ -82,3 +84,83 @@ def test_merge_skips_empty_text_segments():
 def test_merge_defaults_to_speaker_00_when_diarization_is_empty():
     merged = merge_diarization_transcript([], [{"start": 0.0, "end": 1.0, "text": "solo"}])
     assert merged[0].speaker == "SPEAKER_00"
+
+
+class _FakeResponse:
+    def __init__(self, json_body, status_ok=True):
+        self._json_body = json_body
+        self._status_ok = status_ok
+
+    def json(self):
+        return self._json_body
+
+    def raise_for_status(self):
+        if not self._status_ok:
+            raise RuntimeError("HTTP error")
+
+
+def test_diarize_pyannote_full_flow(monkeypatch, tmp_path):
+    monkeypatch.setenv("PYANNOTE_API_KEY", "test-key")
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"fake audio bytes")
+
+    calls = []
+
+    def fake_post(url, json=None, headers=None, **kwargs):
+        calls.append(("POST", url, json, headers))
+        if url.endswith("/media/input"):
+            return _FakeResponse({"url": "https://upload.example.com/presigned"})
+        if url.endswith("/diarize"):
+            assert json["numSpeakers"] == 2
+            return _FakeResponse({"jobId": "job-123", "status": "created"})
+        raise AssertionError(f"unexpected POST {url}")
+
+    def fake_put(url, data=None, **kwargs):
+        calls.append(("PUT", url))
+        return _FakeResponse({})
+
+    def fake_get(url, headers=None, **kwargs):
+        assert url.endswith("/jobs/job-123")
+        return _FakeResponse({
+            "jobId": "job-123",
+            "status": "succeeded",
+            "output": {"diarization": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.5, "confidence": {}}]},
+        })
+
+    monkeypatch.setattr(stt_backend.requests, "post", fake_post)
+    monkeypatch.setattr(stt_backend.requests, "put", fake_put)
+    monkeypatch.setattr(stt_backend.requests, "get", fake_get)
+    monkeypatch.setattr(stt_backend.time, "sleep", lambda _: None)
+
+    result = stt_backend.diarize_pyannote(audio_path, num_speakers=2)
+
+    assert result == [{"start": 0.0, "end": 1.5, "speaker": "SPEAKER_00"}]
+    assert any(method == "PUT" and u == "https://upload.example.com/presigned" for method, u, *_ in calls)
+    for method, url, *_ in calls:
+        if method == "POST":
+            assert "Bearer test-key" in _headers_for(calls, url)
+
+
+def _headers_for(calls, url):
+    for entry in calls:
+        if entry[0] == "POST" and entry[1] == url:
+            return entry[3]["Authorization"]
+    return ""
+
+
+def test_diarize_pyannote_raises_on_job_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("PYANNOTE_API_KEY", "test-key")
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"fake audio bytes")
+    monkeypatch.setattr(stt_backend.requests, "post", lambda url, json=None, headers=None, **kw: (
+        _FakeResponse({"url": "https://upload.example.com/presigned"}) if url.endswith("/media/input")
+        else _FakeResponse({"jobId": "job-123", "status": "created"})
+    ))
+    monkeypatch.setattr(stt_backend.requests, "put", lambda url, data=None, **kw: _FakeResponse({}))
+    monkeypatch.setattr(stt_backend.requests, "get", lambda url, headers=None, **kw: _FakeResponse({
+        "jobId": "job-123", "status": "failed", "output": {"error": "boom"},
+    }))
+    monkeypatch.setattr(stt_backend.time, "sleep", lambda _: None)
+
+    with pytest.raises(RuntimeError):
+        stt_backend.diarize_pyannote(audio_path, num_speakers=None)

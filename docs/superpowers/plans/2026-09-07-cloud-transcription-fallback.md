@@ -896,7 +896,7 @@ git commit -m "feat: add transcribe_audio() dispatcher (WhisperKit or cloud fall
 ### Task 7: Wire real call sites (`transcribe.py`, `meeting.py`)
 
 **Files:**
-- Modify: `src/minutegenius/transcribe.py:203` (the `run_whisperkit(...)` call inside `main()`)
+- Modify: `src/minutegenius/transcribe.py:147` (the `run_whisperkit(...)` call inside `main()` — line number as of Task 6's HEAD; Task 1's refactor shifted it from the plan's original `:203` reference, so match by content, not line number, if this drifts again)
 - Modify: `src/minutegenius/meeting.py:146-167` (`transcribe_video()`)
 
 **Interfaces:**

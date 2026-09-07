@@ -89,12 +89,11 @@ pipeline.
 
 ## Requirements
 
-- **macOS on Apple Silicon.** WhisperKit uses CoreML to run on the Neural
-  Engine — this is the one piece that makes the pipeline fast and fully
-  on-device, and it's currently macOS-only. There's no Linux/Windows support
-  planned for the transcription step in the near term (contributions
-  swapping in a cross-platform backend are welcome — see
-  [CONTRIBUTING.md](CONTRIBUTING.md)).
+- **macOS on Apple Silicon (recommended), or any OS via a cloud fallback.**
+  WhisperKit uses CoreML to run fast and fully on-device on the Neural
+  Engine, but it's macOS-only. On Windows, Linux, or an Intel Mac,
+  MinuteGenius automatically falls back to a cloud transcription+diarization
+  path instead — see "Windows / Linux (no WhisperKit)" below.
 - `ffmpeg` and [`whisperkit-cli`](https://github.com/argmaxinc/WhisperKit):
   ```bash
   brew install ffmpeg whisperkit-cli
@@ -102,6 +101,24 @@ pipeline.
 - An API key for any OpenAI-compatible LLM endpoint (used for steps 2, 4 and
   6 — vision analysis, speaker ID, and write-up). Any provider works:
   OpenRouter, Groq, a local Ollama/vLLM server, etc.
+
+### Windows / Linux (no WhisperKit)
+
+WhisperKit only runs on Apple Silicon (CoreML). On Windows, Linux, or an
+Intel Mac, MinuteGenius automatically falls back to a cloud path when
+`whisperkit-cli` isn't found on `PATH`:
+
+- **Transcription** via the OpenAI Whisper API (`whisper-1`).
+- **Diarization** (who-said-what) via [pyannote.ai](https://www.pyannote.ai).
+
+Set `OPENAI_API_KEY` and `PYANNOTE_API_KEY` in your `.env` (see
+`.env.example`) to use it. This is independent of `AI_API`/`AI_KEY`, which
+configure the summarization model and may point at a non-OpenAI provider.
+
+Tradeoffs versus WhisperKit: per-minute cloud cost on both APIs, meeting
+audio leaves the machine (a consideration for confidential meetings), and it
+requires network access. WhisperKit remains free, on-device, and the
+default whenever it's installed — this path only kicks in when it's absent.
 
 ## Install
 

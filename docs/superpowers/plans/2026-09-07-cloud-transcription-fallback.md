@@ -972,6 +972,7 @@ git commit -m "refactor: route transcribe.py and meeting.py through stt_backend.
 - Modify: `.env.example`
 - Modify: `README.md`
 - Modify: `.github/workflows/ci.yml`
+- Modify: `CONTRIBUTING.md`
 
 **Interfaces:** none (docs/config only).
 
@@ -998,9 +999,30 @@ Append:
 #PYANNOTE_API_KEY=...
 ```
 
-- [ ] **Step 3: Add a README section**
+- [ ] **Step 3: Fix the now-contradictory Requirements bullet, then add a README section**
 
-Add a new subsection under the existing Requirements/Limitations area of `README.md` (adjust heading level to match surrounding structure):
+`README.md`'s `## Requirements` section (around line 90-97) currently opens with:
+
+```markdown
+- **macOS on Apple Silicon.** WhisperKit uses CoreML to run on the Neural
+  Engine — this is the one piece that makes the pipeline fast and fully
+  on-device, and it's currently macOS-only. There's no Linux/Windows support
+  planned for the transcription step in the near term (contributions
+  swapping in a cross-platform backend are welcome — see
+  [CONTRIBUTING.md](CONTRIBUTING.md)).
+```
+
+That claim ("no Linux/Windows support planned") is now false — this plan adds exactly that. Replace it with:
+
+```markdown
+- **macOS on Apple Silicon (recommended), or any OS via a cloud fallback.**
+  WhisperKit uses CoreML to run fast and fully on-device on the Neural
+  Engine, but it's macOS-only. On Windows, Linux, or an Intel Mac,
+  MinuteGenius automatically falls back to a cloud transcription+diarization
+  path instead — see "Windows / Linux (no WhisperKit)" below.
+```
+
+Then add a new subsection right after that `## Requirements` bullet list, before `## Install` (adjust heading level to match surrounding structure — this repo uses `###` for subsections under a `##` section):
 
 ```markdown
 ### Windows / Linux (no WhisperKit)
@@ -1042,10 +1064,29 @@ with:
     # (see README).
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Update the equivalent stale note in `CONTRIBUTING.md`**
+
+`CONTRIBUTING.md` (around line 19-21) has the same under-inclusive claim in its "Running tests" section:
+
+```markdown
+The test suite only covers pure parsing/formatting functions (WebVTT parsing,
+WhisperKit output parsing, timestamp formatting) — it doesn't require
+`ffmpeg`/`whisperkit-cli` or an API key.
+```
+
+Replace with:
+
+```markdown
+The test suite covers pure parsing/formatting functions (WebVTT parsing,
+WhisperKit output parsing, timestamp formatting) plus the cloud transcription
+fallback in `stt_backend.py` (network and subprocess calls mocked) — it
+doesn't require `ffmpeg`/`whisperkit-cli` or real API keys.
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add pyproject.toml .env.example README.md .github/workflows/ci.yml
+git add pyproject.toml .env.example README.md .github/workflows/ci.yml CONTRIBUTING.md
 git commit -m "docs: document the cloud transcription fallback and its config"
 ```
 

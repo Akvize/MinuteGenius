@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from minutegenius.stt_backend import Segment, run_whisperkit  # noqa: F401 (Segment used in type hints below)
+from minutegenius.stt_backend import Segment, transcribe_audio
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
@@ -144,7 +144,7 @@ def main():
             speakers_map[key.strip()] = name.strip()
 
     audio_path = resolve_audio(input_path)
-    raw = run_whisperkit(audio_path, args.language, args.speakers, args.model)
+    raw = transcribe_audio(audio_path, args.language, args.speakers, args.model)
     segments = parse_diarization_output(raw)
 
     if not segments:

@@ -19,6 +19,8 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from PIL import Image
 
+from minutegenius import stt_backend
+
 load_dotenv()
 
 DEFAULT_SCENE_THRESHOLD = 0.4
@@ -144,27 +146,14 @@ def extract_audio(video_path: Path, temp_dir: Path) -> Path:
 
 
 def transcribe_video(video_path: Path, output_path: Path, temp_dir: Path, language: str = "fr", num_speakers: int | None = None) -> str:
-    """Extrait l'audio puis lance WhisperKit avec diarisation. Sauvegarde la sortie brute."""
+    """Extrait l'audio puis lance la transcription+diarisation (WhisperKit ou fallback cloud). Sauvegarde la sortie brute."""
     wav_path = extract_audio(video_path, temp_dir)
     print(f"  Audio extrait : {wav_path}")
 
-    cmd = [
-        "whisperkit-cli", "transcribe",
-        "--audio-path", str(wav_path),
-        "--language", language,
-        "--diarization",
-        "--skip-special-tokens",
-    ]
-    if num_speakers:
-        cmd += ["--diarization-num-speakers", str(num_speakers)]
+    raw = stt_backend.transcribe_audio(wav_path, language, num_speakers, model=None)
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(result.stderr[-500:], file=sys.stderr)
-        sys.exit(1)
-
-    output_path.write_text(result.stdout, encoding="utf-8")
-    return result.stdout
+    output_path.write_text(raw, encoding="utf-8")
+    return raw
 
 
 def _parse_speaker_line(parts: list[str]) -> tuple[float, float, str, list[str]] | None:

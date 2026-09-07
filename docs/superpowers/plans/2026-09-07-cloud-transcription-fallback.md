@@ -443,16 +443,16 @@ def test_diarize_pyannote_full_flow(monkeypatch, tmp_path):
     result = stt_backend.diarize_pyannote(audio_path, num_speakers=2)
 
     assert result == [{"start": 0.0, "end": 1.5, "speaker": "SPEAKER_00"}]
-    assert any(method == "PUT" and u == "https://upload.example.com/presigned" for method, u in calls)
+    assert any(method == "PUT" and u == "https://upload.example.com/presigned" for method, u, *_ in calls)
     for method, url, *_ in calls:
         if method == "POST":
             assert "Bearer test-key" in _headers_for(calls, url)
 
 
 def _headers_for(calls, url):
-    for method, u, _json, headers in calls:
-        if method == "POST" and u == url:
-            return headers["Authorization"]
+    for entry in calls:
+        if entry[0] == "POST" and entry[1] == url:
+            return entry[3]["Authorization"]
     return ""
 
 

@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -244,3 +245,22 @@ def transcribe_openai_whisper(audio_path: Path, language: str, temp_dir: Path) -
             for seg in response.segments
         ]
     return segments
+
+
+def transcribe_cloud(audio_path: Path, language: str, num_speakers: int | None) -> str:
+    print("whisperkit-cli introuvable — bascule sur le fallback cloud (OpenAI Whisper + pyannote.ai)...")
+    with tempfile.TemporaryDirectory() as tmp:
+        temp_dir = Path(tmp)
+        transcript_segments = transcribe_openai_whisper(audio_path, language, temp_dir)
+        print("  Diarisation pyannote.ai...")
+        diarization = diarize_pyannote(audio_path, num_speakers)
+
+    segments = merge_diarization_transcript(diarization, transcript_segments)
+    return format_as_whisperkit_lines(segments, audio_path.name)
+
+
+def transcribe_audio(audio_path: Path, language: str, num_speakers: int | None, model: str | None) -> str:
+    """Point d'entrée unique : WhisperKit si disponible, sinon fallback cloud."""
+    if whisperkit_available():
+        return run_whisperkit(audio_path, language, num_speakers, model)
+    return transcribe_cloud(audio_path, language, num_speakers)

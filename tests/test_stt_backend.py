@@ -264,3 +264,40 @@ def test_transcribe_openai_whisper_offsets_segments_across_chunks(monkeypatch, t
         {"start": 0.0, "end": 1.0, "text": "chunk one"},
         {"start": 100.0, "end": 101.0, "text": "chunk two"},
     ]
+
+
+def test_transcribe_audio_uses_whisperkit_when_available(monkeypatch, tmp_path):
+    monkeypatch.setattr(stt_backend, "whisperkit_available", lambda: True)
+    monkeypatch.setattr(stt_backend, "run_whisperkit", lambda *a, **kw: "WHISPERKIT_OUTPUT")
+
+    result = stt_backend.transcribe_audio(tmp_path / "a.wav", "fr", None, None)
+
+    assert result == "WHISPERKIT_OUTPUT"
+
+
+def test_transcribe_audio_falls_back_to_cloud_when_whisperkit_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(stt_backend, "whisperkit_available", lambda: False)
+    monkeypatch.setattr(stt_backend, "transcribe_cloud", lambda *a, **kw: "CLOUD_OUTPUT")
+
+    result = stt_backend.transcribe_audio(tmp_path / "a.wav", "fr", 3, None)
+
+    assert result == "CLOUD_OUTPUT"
+
+
+def test_transcribe_cloud_wires_whisper_and_pyannote_through_merge_and_format(monkeypatch, tmp_path):
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"fake")
+
+    monkeypatch.setattr(
+        stt_backend, "transcribe_openai_whisper",
+        lambda path, language, temp_dir: [{"start": 0.0, "end": 1.0, "text": "hello"}],
+    )
+    monkeypatch.setattr(
+        stt_backend, "diarize_pyannote",
+        lambda path, num_speakers: [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}],
+    )
+
+    raw = stt_backend.transcribe_cloud(audio_path, "fr", None)
+
+    assert "SPEAKER_00" in raw
+    assert "hello" in raw

@@ -1,5 +1,5 @@
 """
-Transcription + diarisation avec WhisperKit (ou fallback cloud : OpenAI Whisper + pyannote.ai).
+Transcription + diarisation avec WhisperKit (ou fallback cloud : pyannote.ai).
 Usage: python transcribe.py [--audio audio.wav] [--speakers 4] [--language fr]
 """
 import argparse

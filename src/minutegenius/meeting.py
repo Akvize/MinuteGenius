@@ -16,7 +16,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    AuthenticationError,
+    NotFoundError,
+    OpenAI,
+    RateLimitError,
+)
 from PIL import Image
 
 from minutegenius import stt_backend
@@ -47,6 +54,44 @@ def _get_client_image() -> OpenAI:
         api = os.environ.get("AI_API2") or os.environ["AI_API"]
         _client_image = OpenAI(api_key=key, base_url=api)
     return _client_image
+
+
+def check_env_vars(*names: str) -> None:
+    """Vérifie que les variables d'environnement requises sont définies, avec message clair sinon."""
+    missing = [n for n in names if not os.environ.get(n)]
+    if missing:
+        print(f"Erreur : variable(s) d'environnement manquante(s) : {', '.join(missing)}.", file=sys.stderr)
+        print("Renseignez-les dans votre .env (voir .env.example).", file=sys.stderr)
+        sys.exit(1)
+
+
+def check_ai_connection(client: OpenAI, model: str, label: str) -> None:
+    """Fait un appel minimal pour vérifier la connexion avant de lancer le pipeline complet.
+
+    Évite de découvrir une clé invalide ou un endpoint injoignable après plusieurs
+    minutes d'extraction de frames/audio (voir analyze_frame, qui n'a pas de retry).
+    """
+    try:
+        client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "ping"}],
+            timeout=15,
+        )
+    except AuthenticationError:
+        print(f"Erreur : clé API invalide pour {label} (AI_KEY/AI_KEY2).", file=sys.stderr)
+        sys.exit(1)
+    except NotFoundError:
+        print(f"Erreur : modèle '{model}' introuvable sur {label} (AI_MODEL_*).", file=sys.stderr)
+        sys.exit(1)
+    except RateLimitError:
+        print(f"Avertissement : limite de débit atteinte lors du test de connexion à {label}, on continue.", file=sys.stderr)
+    except APIConnectionError:
+        print(f"Erreur : impossible de joindre {label} ({client.base_url}).", file=sys.stderr)
+        print("Vérifiez AI_API/AI_API2 et votre connexion réseau.", file=sys.stderr)
+        sys.exit(1)
+    except APIStatusError as e:
+        print(f"Erreur : {label} a répondu avec le statut {e.status_code} ({e.message}).", file=sys.stderr)
+        sys.exit(1)
 
 
 def analyze_frame(image_path: Path) -> dict:
@@ -132,11 +177,30 @@ def analyze_frames(frames: list[dict], output_path: Path) -> list[dict]:
     return results
 
 
+def _wav_is_valid(wav_path: Path) -> bool:
+    """Vérifie qu'un WAV en cache est exploitable (une extraction interrompue laisse
+    un fichier tronqué, sans données audio, que ffprobe ne peut pas dater)."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(wav_path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return False
+    try:
+        return float(result.stdout.strip()) > 0
+    except ValueError:
+        return False
+
+
 def extract_audio(video_path: Path, temp_dir: Path) -> Path:
     """Extrait la piste audio en WAV 16kHz mono pour WhisperKit."""
     wav_path = temp_dir / f"{video_path.stem}.wav"
     if wav_path.exists():
-        return wav_path
+        if _wav_is_valid(wav_path):
+            return wav_path
+        print("  Audio en cache invalide (extraction précédente interrompue) — ré-extraction...", file=sys.stderr)
+        wav_path.unlink()
     cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vn", "-ar", "16000", "-ac", "1", str(wav_path)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -786,6 +850,19 @@ def main():
     print(f"Sortie   : {output_dir}")
     print(f"Temp     : {temp_dir}")
     print(f"Seuil    : {args.scene_threshold}")
+    print()
+
+    print("Vérification de la connexion aux services IA...")
+    check_env_vars("AI_KEY", "AI_API", "AI_MODEL_IMAGE")
+    image_model = os.environ.get("AI_MODEL_IMAGE2") or os.environ["AI_MODEL_IMAGE"]
+    image_label = "AI_API2 (vision)" if os.environ.get("AI_API2") else "AI_API (vision)"
+    check_ai_connection(_get_client_image(), image_model, image_label)
+    if args.lexicon and Path(args.lexicon).expanduser().exists():
+        check_env_vars("AI_MODEL_WRITER")
+        check_ai_connection(_get_client(), os.environ["AI_MODEL_WRITER"], "AI_API (writer)")
+    if not stt_backend.whisperkit_available():
+        check_env_vars("PYANNOTE_API_KEY")
+    print("  → connexion OK")
     print()
 
     # Suppression des sorties des étapes à relancer

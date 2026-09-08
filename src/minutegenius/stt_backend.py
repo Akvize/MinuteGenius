@@ -1,12 +1,12 @@
 """
 Backend de transcription : WhisperKit (local, Mac) si disponible, sinon
-fallback cloud (OpenAI Whisper + pyannote.ai) — voir transcribe_cloud().
+fallback cloud pyannote.ai — transcription + diarisation en un seul appel
+(STT Orchestration) — voir transcribe_cloud().
 """
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import uuid
@@ -15,7 +15,6 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
-from openai import OpenAI
 
 load_dotenv()
 
@@ -92,44 +91,26 @@ def format_as_whisperkit_lines(segments: list[Segment], audio_filename: str) -> 
     return "\n".join(lines)
 
 
-def merge_diarization_transcript(diarization: list[dict], transcript_segments: list[dict]) -> list[Segment]:
-    """Associe à chaque segment de transcript le locuteur dont le tour de parole
-    chevauche le plus (fallback : locuteur le plus proche par milieu de segment)."""
-    merged = []
-    for ts in transcript_segments:
-        text = ts["text"].strip()
-        if not text:
-            continue
-
-        best_speaker, best_overlap = None, 0.0
-        for turn in diarization:
-            overlap = min(turn["end"], ts["end"]) - max(turn["start"], ts["start"])
-            if overlap > best_overlap:
-                best_overlap, best_speaker = overlap, turn["speaker"]
-
-        if best_speaker is None and diarization:
-            mid = (ts["start"] + ts["end"]) / 2
-            best_speaker = min(
-                diarization, key=lambda t: abs((t["start"] + t["end"]) / 2 - mid)
-            )["speaker"]
-
-        merged.append(Segment(start=ts["start"], end=ts["end"], speaker=best_speaker or "SPEAKER_00", text=text))
-    return merged
-
-
 PYANNOTE_BASE_URL = "https://api.pyannote.ai/v1"
 PYANNOTE_POLL_INTERVAL_S = 5
 PYANNOTE_POLL_TIMEOUT_S = 1800  # 30 min
 PYANNOTE_HTTP_TIMEOUT_S = 30
 PYANNOTE_UPLOAD_TIMEOUT_S = 600  # generous — uploads the full original audio file
+# faster-whisper-large-v3-turbo : 99+ langues (vs. 27 pour parakeet-tdt-0.6b-v3,
+# l'autre choix possible). L'API pyannote.ai n'accepte pas de langue en paramètre
+# (détection automatique) : ce modèle maximise les chances de bien couvrir la
+# langue réellement parlée, --language n'étant pas transmis sur ce chemin cloud.
+PYANNOTE_TRANSCRIPTION_MODEL = "faster-whisper-large-v3-turbo"
 
 
 def _pyannote_headers() -> dict:
     return {"Authorization": f"Bearer {os.environ['PYANNOTE_API_KEY']}"}
 
 
-def diarize_pyannote(audio_path: Path, num_speakers: int | None) -> list[dict]:
-    """Diarise un fichier audio via pyannote.ai. Retourne [{start, end, speaker}, ...]."""
+def transcribe_pyannote(audio_path: Path, num_speakers: int | None) -> list[Segment]:
+    """Transcrit et diarise un fichier audio en un seul appel pyannote.ai (STT
+    Orchestration : transcription attribuée par locuteur). Retourne les segments
+    de tour de parole (turnLevelTranscription), déjà alignés avec le locuteur."""
     media_key = f"media://minutegenius-{uuid.uuid4().hex}"
 
     resp = requests.post(
@@ -143,7 +124,11 @@ def diarize_pyannote(audio_path: Path, num_speakers: int | None) -> list[dict]:
         put_resp = requests.put(upload_url, data=f, timeout=PYANNOTE_UPLOAD_TIMEOUT_S)
     put_resp.raise_for_status()
 
-    body: dict = {"url": media_key}
+    body: dict = {
+        "url": media_key,
+        "transcription": True,
+        "transcriptionConfig": {"model": PYANNOTE_TRANSCRIPTION_MODEL},
+    }
     if num_speakers:
         body["numSpeakers"] = num_speakers
     resp = requests.post(
@@ -153,11 +138,21 @@ def diarize_pyannote(audio_path: Path, num_speakers: int | None) -> list[dict]:
     resp.raise_for_status()
     job_id = resp.json()["jobId"]
 
-    diarization = _poll_pyannote_job(job_id)
-    return [{"start": t["start"], "end": t["end"], "speaker": t["speaker"]} for t in diarization]
+    output = _poll_pyannote_job(job_id)
+    turns = output.get("turnLevelTranscription")
+    if turns is None:
+        raise RuntimeError(
+            f"Réponse pyannote.ai inattendue pour le job {job_id} : "
+            "'turnLevelTranscription' absent (transcription non activée côté API ?)."
+        )
+    return [
+        Segment(start=t["start"], end=t["end"], speaker=t.get("speaker") or "SPEAKER_00", text=t["text"].strip())
+        for t in turns
+        if t["text"].strip()
+    ]
 
 
-def _poll_pyannote_job(job_id: str) -> list[dict]:
+def _poll_pyannote_job(job_id: str) -> dict:
     deadline = time.time() + PYANNOTE_POLL_TIMEOUT_S
     while time.time() < deadline:
         resp = requests.get(
@@ -168,116 +163,26 @@ def _poll_pyannote_job(job_id: str) -> list[dict]:
         job = resp.json()
         status = job["status"]
         if status == "succeeded":
-            return job["output"]["diarization"]
+            return job["output"]
         if status in ("failed", "canceled"):
-            error = job.get("output", {}).get("error", "raison inconnue")
+            error = (job.get("output") or {}).get("error", "raison inconnue")
             raise RuntimeError(f"Job pyannote.ai {job_id} : statut {status} ({error})")
         time.sleep(PYANNOTE_POLL_INTERVAL_S)
     raise TimeoutError(f"Job pyannote.ai {job_id} n'a pas terminé après {PYANNOTE_POLL_TIMEOUT_S}s")
 
 
-OPENAI_CHUNK_SECONDS = 7200  # 2h — 24kbps mono MP3 stays well under the 25MB API limit
-OPENAI_UPLOAD_BITRATE_KBPS = 24
-
-_openai_client: OpenAI | None = None
-
-
-def _get_openai_whisper_client() -> OpenAI:
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    return _openai_client
-
-
 def _require_cloud_env_vars() -> None:
-    """Vérifie les clés cloud avant toute dépense (ffmpeg, appels réseau, API payantes)."""
-    missing = [name for name in ("OPENAI_API_KEY", "PYANNOTE_API_KEY") if not os.environ.get(name)]
-    if missing:
-        print(f"Erreur : variable(s) d'environnement manquante(s) : {', '.join(missing)}", file=sys.stderr)
-        print("Configure-les dans .env (voir .env.example) avant de relancer.", file=sys.stderr)
+    """Vérifie les clés cloud avant toute dépense (appels réseau, API payante)."""
+    if not os.environ.get("PYANNOTE_API_KEY"):
+        print("Erreur : variable d'environnement manquante : PYANNOTE_API_KEY", file=sys.stderr)
+        print("Configure-la dans .env (voir .env.example) avant de relancer.", file=sys.stderr)
         sys.exit(1)
 
 
-def _prepare_upload_audio(audio_path: Path, temp_dir: Path) -> Path:
-    """Réencode en MP3 mono basse résolution : format accepté par l'API OpenAI,
-    taille prévisible (~10.8MB/heure), suffisant pour de la voix."""
-    mp3_path = temp_dir / f"{audio_path.stem}_upload.mp3"
-    cmd = [
-        "ffmpeg", "-y", "-i", str(audio_path),
-        "-ac", "1", "-ar", "16000", "-b:a", f"{OPENAI_UPLOAD_BITRATE_KBPS}k",
-        str(mp3_path),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(result.stderr[-500:], file=sys.stderr)
-        sys.exit(1)
-    return mp3_path
-
-
-def _probe_duration(audio_path: Path) -> float:
-    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(audio_path)]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(result.stderr[-500:], file=sys.stderr)
-        sys.exit(1)
-    return float(result.stdout.strip())
-
-
-def _split_audio_if_needed(mp3_path: Path, temp_dir: Path) -> list[tuple[Path, float]]:
-    """Découpe en morceaux de OPENAI_CHUNK_SECONDS si l'audio dépasse cette durée.
-    Retourne [(chemin_du_morceau, offset_en_secondes), ...]."""
-    duration = _probe_duration(mp3_path)
-    if duration <= OPENAI_CHUNK_SECONDS:
-        return [(mp3_path, 0.0)]
-
-    pattern = temp_dir / f"{mp3_path.stem}_chunk_%03d.mp3"
-    cmd = [
-        "ffmpeg", "-y", "-i", str(mp3_path),
-        "-f", "segment", "-segment_time", str(OPENAI_CHUNK_SECONDS),
-        "-c", "copy", str(pattern),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(result.stderr[-500:], file=sys.stderr)
-        sys.exit(1)
-
-    chunks = sorted(temp_dir.glob(f"{mp3_path.stem}_chunk_*.mp3"))
-    return [(chunk, i * OPENAI_CHUNK_SECONDS) for i, chunk in enumerate(chunks)]
-
-
-def transcribe_openai_whisper(audio_path: Path, language: str, temp_dir: Path) -> list[dict]:
-    """Transcrit via l'API OpenAI Whisper. Retourne [{start, end, text}, ...] avec
-    les timestamps ramenés à l'échelle du fichier d'origine (offsets de chunk inclus)."""
-    mp3_path = _prepare_upload_audio(audio_path, temp_dir)
-    chunks = _split_audio_if_needed(mp3_path, temp_dir)
-
-    segments: list[dict] = []
-    for chunk_path, offset in chunks:
-        print(f"  Transcription OpenAI Whisper ({chunk_path.name})...")
-        with open(chunk_path, "rb") as f:
-            response = _get_openai_whisper_client().audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                language=language,
-                response_format="verbose_json",
-            )
-        segments += [
-            {"start": seg.start + offset, "end": seg.end + offset, "text": seg.text}
-            for seg in (response.segments or [])
-        ]
-    return segments
-
-
-def transcribe_cloud(audio_path: Path, language: str, num_speakers: int | None) -> str:
+def transcribe_cloud(audio_path: Path, num_speakers: int | None) -> str:
     _require_cloud_env_vars()
-    print("whisperkit-cli introuvable — bascule sur le fallback cloud (OpenAI Whisper + pyannote.ai)...")
-    with tempfile.TemporaryDirectory() as tmp:
-        temp_dir = Path(tmp)
-        transcript_segments = transcribe_openai_whisper(audio_path, language, temp_dir)
-        print("  Diarisation pyannote.ai...")
-        diarization = diarize_pyannote(audio_path, num_speakers)
-
-    segments = merge_diarization_transcript(diarization, transcript_segments)
+    print("whisperkit-cli introuvable — bascule sur le fallback cloud (pyannote.ai, transcription + diarisation)...")
+    segments = transcribe_pyannote(audio_path, num_speakers)
     if not segments:
         print("Erreur : aucun segment de transcription obtenu (audio vide ou silencieux ?).", file=sys.stderr)
         sys.exit(1)
@@ -288,4 +193,4 @@ def transcribe_audio(audio_path: Path, language: str, num_speakers: int | None, 
     """Point d'entrée unique : WhisperKit si disponible, sinon fallback cloud."""
     if whisperkit_available():
         return run_whisperkit(audio_path, language, num_speakers, model)
-    return transcribe_cloud(audio_path, language, num_speakers)
+    return transcribe_cloud(audio_path, num_speakers)

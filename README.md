@@ -71,7 +71,7 @@ Given a meeting video, MinuteGenius runs a 6-step pipeline:
    video-call chrome (participant tiles, names, toolbars).
 3. **Transcription + diarization** — [WhisperKit](https://github.com/argmaxinc/WhisperKit)
    runs fully on-device (CoreML / Neural Engine) to transcribe and separate
-   speakers on Mac; falls back to a cloud path (OpenAI Whisper + pyannote.ai)
+   speakers on Mac; falls back to a cloud path ([pyannote.ai](https://www.pyannote.ai))
    elsewhere — see Requirements.
 4. **Speaker identification** — for each detected speaker, the vision model
    looks at frames from their longest speaking turns to put a name on them
@@ -114,17 +114,17 @@ WhisperKit only runs on Apple Silicon (CoreML). On Windows, Linux, or an
 Intel Mac, MinuteGenius automatically falls back to a cloud path when
 `whisperkit-cli` isn't found on `PATH`:
 
-- **Transcription** via the OpenAI Whisper API (`whisper-1`).
-- **Diarization** (who-said-what) via [pyannote.ai](https://www.pyannote.ai).
+- **Transcription + diarization**, in a single call, via [pyannote.ai](https://www.pyannote.ai)'s
+  STT Orchestration API (speaker-attributed transcription).
 
-Set `OPENAI_API_KEY` and `PYANNOTE_API_KEY` in your `.env` (see
-`.env.example`) to use it. This is independent of `AI_API`/`AI_KEY`, which
-configure the summarization model and may point at a non-OpenAI provider.
+Set `PYANNOTE_API_KEY` in your `.env` (see `.env.example`) to use it. This is
+independent of `AI_API`/`AI_KEY`, which configure the summarization model and
+may point at a different provider.
 
-Tradeoffs versus WhisperKit: per-minute cloud cost on both APIs, meeting
-audio leaves the machine (a consideration for confidential meetings), and it
-requires network access. WhisperKit remains free, on-device, and the
-default whenever it's installed — this path only kicks in when it's absent.
+Tradeoffs versus WhisperKit: per-minute cloud cost, meeting audio leaves the
+machine (a consideration for confidential meetings), and it requires network
+access. WhisperKit remains free, on-device, and the default whenever it's
+installed — this path only kicks in when it's absent.
 
 ## Install
 

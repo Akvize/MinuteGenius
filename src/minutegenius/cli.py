@@ -1,5 +1,5 @@
 """
-Point d'entrée unifié : minutegenius {meeting,transcribe,vtt} ...
+Point d'entrée unifié : minutegenius {check,meeting,transcribe,vtt} ...
 
 Chaque sous-commande délègue directement au argparse du module correspondant
 (meeting.py, transcribe.py, vtt.py), qui reste utilisable indépendamment.
@@ -9,6 +9,7 @@ import sys
 USAGE = """usage: minutegenius <command> [options]
 
 Commands:
+  check        Vérifie la configuration et la connectivité (AI_API, pyannote.ai...)
   meeting      Génère un compte-rendu intelligent à partir d'une vidéo de réunion
   transcribe   Transcrit + diarise un fichier audio/vidéo (sans le pipeline complet)
   vtt          Convertit un fichier de sous-titres WebVTT en Markdown
@@ -16,7 +17,7 @@ Commands:
 Run 'minutegenius <command> --help' for command-specific options.
 """
 
-COMMANDS = {"meeting", "transcribe", "vtt"}
+COMMANDS = {"check", "meeting", "transcribe", "vtt"}
 
 
 def main() -> None:
@@ -35,7 +36,9 @@ def main() -> None:
     # affiche prog=sys.argv[0]).
     sys.argv = [f"minutegenius {command}"] + rest
 
-    if command == "meeting":
+    if command == "check":
+        from minutegenius.check import main as run
+    elif command == "meeting":
         from minutegenius.meeting import main as run
     elif command == "transcribe":
         from minutegenius.transcribe import main as run

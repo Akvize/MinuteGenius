@@ -1,8 +1,6 @@
 import subprocess
 
-import pytest
-
-from minutegenius.meeting import _fmt_time, _hamming, _parse_speaker_line, _wav_is_valid, check_env_vars, parse_segments
+from minutegenius.meeting import _fmt_time, _hamming, _parse_speaker_line, _wav_is_valid, parse_segments
 
 
 def test_parse_speaker_line_simple_filename():
@@ -53,17 +51,6 @@ def test_parse_segments_groups_by_speaker(tmp_path):
     segments = parse_segments(transcript)
     assert set(segments.keys()) == {"SPEAKER_00", "SPEAKER_01"}
     assert segments["SPEAKER_00"] == [(0.00, 2.50), (3.50, 1.00)]
-
-
-def test_check_env_vars_passes_when_all_set(monkeypatch):
-    monkeypatch.setenv("FOO", "bar")
-    check_env_vars("FOO")  # ne doit pas lever
-
-
-def test_check_env_vars_exits_when_missing(monkeypatch):
-    monkeypatch.delenv("MISSING_VAR", raising=False)
-    with pytest.raises(SystemExit):
-        check_env_vars("MISSING_VAR")
 
 
 def test_wav_is_valid_true_for_real_duration(monkeypatch, tmp_path):

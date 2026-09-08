@@ -16,14 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import (
-    APIConnectionError,
-    APIStatusError,
-    AuthenticationError,
-    NotFoundError,
-    OpenAI,
-    RateLimitError,
-)
+from openai import OpenAI
 from PIL import Image
 
 from minutegenius import stt_backend
@@ -36,7 +29,7 @@ _client: OpenAI | None = None
 _client_image: OpenAI | None = None
 
 
-def _get_client() -> OpenAI:
+def get_client() -> OpenAI:
     global _client
     if _client is None:
         _client = OpenAI(
@@ -46,7 +39,7 @@ def _get_client() -> OpenAI:
     return _client
 
 
-def _get_client_image() -> OpenAI:
+def get_client_image() -> OpenAI:
     """Client dédié aux tâches vision (étape 4). Utilise AI_KEY2/AI_API2 si définis."""
     global _client_image
     if _client_image is None:
@@ -54,44 +47,6 @@ def _get_client_image() -> OpenAI:
         api = os.environ.get("AI_API2") or os.environ["AI_API"]
         _client_image = OpenAI(api_key=key, base_url=api)
     return _client_image
-
-
-def check_env_vars(*names: str) -> None:
-    """Vérifie que les variables d'environnement requises sont définies, avec message clair sinon."""
-    missing = [n for n in names if not os.environ.get(n)]
-    if missing:
-        print(f"Erreur : variable(s) d'environnement manquante(s) : {', '.join(missing)}.", file=sys.stderr)
-        print("Renseignez-les dans votre .env (voir .env.example).", file=sys.stderr)
-        sys.exit(1)
-
-
-def check_ai_connection(client: OpenAI, model: str, label: str) -> None:
-    """Fait un appel minimal pour vérifier la connexion avant de lancer le pipeline complet.
-
-    Évite de découvrir une clé invalide ou un endpoint injoignable après plusieurs
-    minutes d'extraction de frames/audio (voir analyze_frame, qui n'a pas de retry).
-    """
-    try:
-        client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": "ping"}],
-            timeout=15,
-        )
-    except AuthenticationError:
-        print(f"Erreur : clé API invalide pour {label} (AI_KEY/AI_KEY2).", file=sys.stderr)
-        sys.exit(1)
-    except NotFoundError:
-        print(f"Erreur : modèle '{model}' introuvable sur {label} (AI_MODEL_*).", file=sys.stderr)
-        sys.exit(1)
-    except RateLimitError:
-        print(f"Avertissement : limite de débit atteinte lors du test de connexion à {label}, on continue.", file=sys.stderr)
-    except APIConnectionError:
-        print(f"Erreur : impossible de joindre {label} ({client.base_url}).", file=sys.stderr)
-        print("Vérifiez AI_API/AI_API2 et votre connexion réseau.", file=sys.stderr)
-        sys.exit(1)
-    except APIStatusError as e:
-        print(f"Erreur : {label} a répondu avec le statut {e.status_code} ({e.message}).", file=sys.stderr)
-        sys.exit(1)
 
 
 def analyze_frame(image_path: Path) -> dict:
@@ -104,7 +59,7 @@ def analyze_frame(image_path: Path) -> dict:
     ext = image_path.suffix.lstrip(".").lower()
     media_type = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
 
-    response = _get_client_image().chat.completions.create(
+    response = get_client_image().chat.completions.create(
         model=model,
         messages=[
             {
@@ -386,7 +341,7 @@ def _identify_speaker_once(frames: list[Path], known: dict[str, str], attempt: i
 
     for retry in range(MAX_RETRIES):
         try:
-            response = _get_client_image().chat.completions.create(
+            response = get_client_image().chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": content}],
                 timeout=API_TIMEOUT,
@@ -732,7 +687,7 @@ def _correct_block(transcription_lines: list[str], presented: str | None, lexico
     MAX_RETRIES = 3
     for retry in range(MAX_RETRIES):
         try:
-            response = _get_client().chat.completions.create(
+            response = get_client().chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 timeout=API_TIMEOUT,
@@ -778,7 +733,7 @@ def clean_report(report_path: Path, lexicon_path: Path, output_path: Path, max_b
     print(f"  Envoi de la timeline au LLM ({len(timeline)} caractères)...", flush=True)
     for retry in range(MAX_RETRIES):
         try:
-            response = _get_client().chat.completions.create(
+            response = get_client().chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 timeout=API_TIMEOUT,
@@ -850,19 +805,6 @@ def main():
     print(f"Sortie   : {output_dir}")
     print(f"Temp     : {temp_dir}")
     print(f"Seuil    : {args.scene_threshold}")
-    print()
-
-    print("Vérification de la connexion aux services IA...")
-    check_env_vars("AI_KEY", "AI_API", "AI_MODEL_IMAGE")
-    image_model = os.environ.get("AI_MODEL_IMAGE2") or os.environ["AI_MODEL_IMAGE"]
-    image_label = "AI_API2 (vision)" if os.environ.get("AI_API2") else "AI_API (vision)"
-    check_ai_connection(_get_client_image(), image_model, image_label)
-    if args.lexicon and Path(args.lexicon).expanduser().exists():
-        check_env_vars("AI_MODEL_WRITER")
-        check_ai_connection(_get_client(), os.environ["AI_MODEL_WRITER"], "AI_API (writer)")
-    if not stt_backend.whisperkit_available():
-        check_env_vars("PYANNOTE_API_KEY")
-    print("  → connexion OK")
     print()
 
     # Suppression des sorties des étapes à relancer

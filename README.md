@@ -137,6 +137,17 @@ cp .env.example .env   # fill in AI_API / AI_KEY
 
 ## Usage
 
+### Verify your setup — `check`
+
+Validates your `.env` and tests connectivity to every configured service
+(AI_API/AI_API2, pyannote.ai) before you spend time/money on a real run:
+
+```bash
+uv run minutegenius check
+# also test AI_MODEL_WRITER, used by step 6's lexicon-based correction:
+uv run minutegenius check --lexicon my-lexicon.md
+```
+
 ### Full pipeline — `meeting`
 
 ```bash

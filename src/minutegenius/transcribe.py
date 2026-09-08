@@ -130,6 +130,8 @@ def main():
                         help="Modèle Whisper (auto si non spécifié)")
     parser.add_argument("--speakers-map", default=None,
                         help="Noms des locuteurs, ex: \"A:Mickael,B:Slimane\"")
+    parser.add_argument("--cloud", action="store_true",
+                        help="Force la transcription cloud (pyannote.ai) même si whisperkit-cli est disponible")
     args = parser.parse_args()
 
     input_path = Path(args.audio)
@@ -144,7 +146,7 @@ def main():
             speakers_map[key.strip()] = name.strip()
 
     audio_path = resolve_audio(input_path)
-    raw = transcribe_audio(audio_path, args.language, args.speakers, args.model)
+    raw = transcribe_audio(audio_path, args.language, args.speakers, args.model, force_cloud=args.cloud)
     segments = parse_diarization_output(raw)
 
     if not segments:

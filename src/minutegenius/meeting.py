@@ -164,12 +164,15 @@ def extract_audio(video_path: Path, temp_dir: Path) -> Path:
     return wav_path
 
 
-def transcribe_video(video_path: Path, output_path: Path, temp_dir: Path, language: str = "fr", num_speakers: int | None = None) -> str:
+def transcribe_video(
+    video_path: Path, output_path: Path, temp_dir: Path, language: str = "fr", num_speakers: int | None = None,
+    force_cloud: bool = False,
+) -> str:
     """Extrait l'audio puis lance la transcription+diarisation (WhisperKit ou fallback cloud). Sauvegarde la sortie brute."""
     wav_path = extract_audio(video_path, temp_dir)
     print(f"  Audio extrait : {wav_path}")
 
-    raw = stt_backend.transcribe_audio(wav_path, language, num_speakers, model=None)
+    raw = stt_backend.transcribe_audio(wav_path, language, num_speakers, model=None, force_cloud=force_cloud)
 
     output_path.write_text(raw, encoding="utf-8")
     return raw
@@ -784,6 +787,8 @@ def main():
                         help="Répertoire de sortie (défaut: <video_stem>_meeting/)")
     parser.add_argument("--language", default="fr", help="Langue pour la transcription (défaut: fr)")
     parser.add_argument("--speakers", type=int, default=None, help="Nombre de locuteurs (auto si non spécifié)")
+    parser.add_argument("--cloud", action="store_true",
+                        help="Force la transcription cloud (pyannote.ai) même si whisperkit-cli est disponible")
     parser.add_argument("--lexicon", type=str, default=None, help="Chemin vers le lexique markdown pour la correction (étape 6)")
     parser.add_argument("--max-clean-blocks", type=int, default=None, help="Nombre maximum de blocs à corriger (étape 6, pour test)")
     parser.add_argument("--from-step", type=int, default=None, metavar="N",
@@ -869,7 +874,7 @@ def main():
         print("Étape 3 : transcription déjà effectuée, chargement...")
     else:
         print("Étape 3 : transcription + diarisation...")
-        transcribe_video(video_path, transcript_raw, temp_dir, language=args.language, num_speakers=args.speakers)
+        transcribe_video(video_path, transcript_raw, temp_dir, language=args.language, num_speakers=args.speakers, force_cloud=args.cloud)
         print(f"  → {transcript_raw}")
     print()
 

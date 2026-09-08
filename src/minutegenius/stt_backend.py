@@ -1,7 +1,9 @@
 """
 Backend de transcription : WhisperKit (local, Mac) si disponible, sinon
 fallback cloud pyannote.ai — transcription + diarisation en un seul appel
-(STT Orchestration) — voir transcribe_cloud().
+(STT Orchestration) — voir transcribe_cloud(). Le cloud peut aussi être
+forcé explicitement via transcribe_audio(force_cloud=True), même si
+WhisperKit est disponible.
 """
 import os
 import shutil
@@ -181,9 +183,12 @@ def _require_cloud_env_vars() -> None:
         sys.exit(1)
 
 
-def transcribe_cloud(audio_path: Path, num_speakers: int | None) -> str:
+def transcribe_cloud(audio_path: Path, num_speakers: int | None, *, forced: bool = False) -> str:
     _require_cloud_env_vars()
-    print("whisperkit-cli introuvable — bascule sur le fallback cloud (pyannote.ai, transcription + diarisation)...")
+    if forced:
+        print("Transcription cloud demandée (--cloud) — pyannote.ai (transcription + diarisation)...")
+    else:
+        print("whisperkit-cli introuvable — bascule sur le fallback cloud (pyannote.ai, transcription + diarisation)...")
     segments = transcribe_pyannote(audio_path, num_speakers)
     if not segments:
         print("Erreur : aucun segment de transcription obtenu (audio vide ou silencieux ?).", file=sys.stderr)
@@ -191,8 +196,15 @@ def transcribe_cloud(audio_path: Path, num_speakers: int | None) -> str:
     return format_as_whisperkit_lines(segments, audio_path.name)
 
 
-def transcribe_audio(audio_path: Path, language: str, num_speakers: int | None, model: str | None) -> str:
-    """Point d'entrée unique : WhisperKit si disponible, sinon fallback cloud."""
+def transcribe_audio(
+    audio_path: Path, language: str, num_speakers: int | None, model: str | None, force_cloud: bool = False,
+) -> str:
+    """Point d'entrée unique : WhisperKit si disponible, sinon fallback cloud.
+
+    force_cloud=True force le cloud même si whisperkit-cli est disponible localement.
+    """
+    if force_cloud:
+        return transcribe_cloud(audio_path, num_speakers, forced=True)
     if whisperkit_available():
         return run_whisperkit(audio_path, language, num_speakers, model)
     return transcribe_cloud(audio_path, num_speakers)

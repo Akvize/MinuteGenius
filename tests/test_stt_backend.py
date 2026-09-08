@@ -226,6 +226,38 @@ def test_transcribe_audio_falls_back_to_cloud_when_whisperkit_missing(monkeypatc
     assert result == "CLOUD_OUTPUT"
 
 
+def test_transcribe_audio_force_cloud_skips_whisperkit_even_when_available(monkeypatch, tmp_path):
+    monkeypatch.setattr(stt_backend, "whisperkit_available", lambda: True)
+    monkeypatch.setattr(
+        stt_backend, "run_whisperkit",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("run_whisperkit should not be called")),
+    )
+    calls = []
+    monkeypatch.setattr(
+        stt_backend, "transcribe_cloud",
+        lambda *a, **kw: calls.append((a, kw)) or "CLOUD_OUTPUT",
+    )
+
+    result = stt_backend.transcribe_audio(tmp_path / "a.wav", "fr", 3, None, force_cloud=True)
+
+    assert result == "CLOUD_OUTPUT"
+    assert calls == [((tmp_path / "a.wav", 3), {"forced": True})]
+
+
+def test_transcribe_cloud_forced_message_does_not_claim_whisperkit_missing(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PYANNOTE_API_KEY", "test-key")
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"fake")
+    monkeypatch.setattr(stt_backend, "transcribe_pyannote", lambda path, num_speakers: [])
+
+    with pytest.raises(SystemExit):
+        stt_backend.transcribe_cloud(audio_path, None, forced=True)
+
+    out = capsys.readouterr().out
+    assert "introuvable" not in out
+    assert "--cloud" in out
+
+
 def test_transcribe_cloud_wires_pyannote_through_format(monkeypatch, tmp_path):
     monkeypatch.setenv("PYANNOTE_API_KEY", "test-key")
     audio_path = tmp_path / "audio.wav"

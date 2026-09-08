@@ -19,6 +19,8 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from PIL import Image
 
+from minutegenius import stt_backend
+
 load_dotenv()
 
 DEFAULT_SCENE_THRESHOLD = 0.4
@@ -27,7 +29,7 @@ _client: OpenAI | None = None
 _client_image: OpenAI | None = None
 
 
-def _get_client() -> OpenAI:
+def get_client() -> OpenAI:
     global _client
     if _client is None:
         _client = OpenAI(
@@ -37,7 +39,7 @@ def _get_client() -> OpenAI:
     return _client
 
 
-def _get_client_image() -> OpenAI:
+def get_client_image() -> OpenAI:
     """Client dédié aux tâches vision (étape 4). Utilise AI_KEY2/AI_API2 si définis."""
     global _client_image
     if _client_image is None:
@@ -57,7 +59,7 @@ def analyze_frame(image_path: Path) -> dict:
     ext = image_path.suffix.lstrip(".").lower()
     media_type = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
 
-    response = _get_client_image().chat.completions.create(
+    response = get_client_image().chat.completions.create(
         model=model,
         messages=[
             {
@@ -130,11 +132,30 @@ def analyze_frames(frames: list[dict], output_path: Path) -> list[dict]:
     return results
 
 
+def _wav_is_valid(wav_path: Path) -> bool:
+    """Vérifie qu'un WAV en cache est exploitable (une extraction interrompue laisse
+    un fichier tronqué, sans données audio, que ffprobe ne peut pas dater)."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(wav_path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return False
+    try:
+        return float(result.stdout.strip()) > 0
+    except ValueError:
+        return False
+
+
 def extract_audio(video_path: Path, temp_dir: Path) -> Path:
     """Extrait la piste audio en WAV 16kHz mono pour WhisperKit."""
     wav_path = temp_dir / f"{video_path.stem}.wav"
     if wav_path.exists():
-        return wav_path
+        if _wav_is_valid(wav_path):
+            return wav_path
+        print("  Audio en cache invalide (extraction précédente interrompue) — ré-extraction...", file=sys.stderr)
+        wav_path.unlink()
     cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vn", "-ar", "16000", "-ac", "1", str(wav_path)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -143,28 +164,18 @@ def extract_audio(video_path: Path, temp_dir: Path) -> Path:
     return wav_path
 
 
-def transcribe_video(video_path: Path, output_path: Path, temp_dir: Path, language: str = "fr", num_speakers: int | None = None) -> str:
-    """Extrait l'audio puis lance WhisperKit avec diarisation. Sauvegarde la sortie brute."""
+def transcribe_video(
+    video_path: Path, output_path: Path, temp_dir: Path, language: str = "fr", num_speakers: int | None = None,
+    force_cloud: bool = False,
+) -> str:
+    """Extrait l'audio puis lance la transcription+diarisation (WhisperKit ou fallback cloud). Sauvegarde la sortie brute."""
     wav_path = extract_audio(video_path, temp_dir)
     print(f"  Audio extrait : {wav_path}")
 
-    cmd = [
-        "whisperkit-cli", "transcribe",
-        "--audio-path", str(wav_path),
-        "--language", language,
-        "--diarization",
-        "--skip-special-tokens",
-    ]
-    if num_speakers:
-        cmd += ["--diarization-num-speakers", str(num_speakers)]
+    raw = stt_backend.transcribe_audio(wav_path, language, num_speakers, model=None, force_cloud=force_cloud)
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(result.stderr[-500:], file=sys.stderr)
-        sys.exit(1)
-
-    output_path.write_text(result.stdout, encoding="utf-8")
-    return result.stdout
+    output_path.write_text(raw, encoding="utf-8")
+    return raw
 
 
 def _parse_speaker_line(parts: list[str]) -> tuple[float, float, str, list[str]] | None:
@@ -333,7 +344,7 @@ def _identify_speaker_once(frames: list[Path], known: dict[str, str], attempt: i
 
     for retry in range(MAX_RETRIES):
         try:
-            response = _get_client_image().chat.completions.create(
+            response = get_client_image().chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": content}],
                 timeout=API_TIMEOUT,
@@ -679,7 +690,7 @@ def _correct_block(transcription_lines: list[str], presented: str | None, lexico
     MAX_RETRIES = 3
     for retry in range(MAX_RETRIES):
         try:
-            response = _get_client().chat.completions.create(
+            response = get_client().chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 timeout=API_TIMEOUT,
@@ -725,7 +736,7 @@ def clean_report(report_path: Path, lexicon_path: Path, output_path: Path, max_b
     print(f"  Envoi de la timeline au LLM ({len(timeline)} caractères)...", flush=True)
     for retry in range(MAX_RETRIES):
         try:
-            response = _get_client().chat.completions.create(
+            response = get_client().chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 timeout=API_TIMEOUT,
@@ -776,6 +787,8 @@ def main():
                         help="Répertoire de sortie (défaut: <video_stem>_meeting/)")
     parser.add_argument("--language", default="fr", help="Langue pour la transcription (défaut: fr)")
     parser.add_argument("--speakers", type=int, default=None, help="Nombre de locuteurs (auto si non spécifié)")
+    parser.add_argument("--cloud", action="store_true",
+                        help="Force la transcription cloud (pyannote.ai) même si whisperkit-cli est disponible")
     parser.add_argument("--lexicon", type=str, default=None, help="Chemin vers le lexique markdown pour la correction (étape 6)")
     parser.add_argument("--max-clean-blocks", type=int, default=None, help="Nombre maximum de blocs à corriger (étape 6, pour test)")
     parser.add_argument("--from-step", type=int, default=None, metavar="N",
@@ -855,13 +868,13 @@ def main():
         print(f"  → {analyzed_json}")
     print()
 
-    # Étape 3 — transcription avec WhisperKit
+    # Étape 3 — transcription (WhisperKit ou fallback cloud)
     transcript_raw = output_dir / f"{video_path.stem}_transcript_raw.txt"
     if transcript_raw.exists():
         print("Étape 3 : transcription déjà effectuée, chargement...")
     else:
         print("Étape 3 : transcription + diarisation...")
-        transcribe_video(video_path, transcript_raw, temp_dir, language=args.language, num_speakers=args.speakers)
+        transcribe_video(video_path, transcript_raw, temp_dir, language=args.language, num_speakers=args.speakers, force_cloud=args.cloud)
         print(f"  → {transcript_raw}")
     print()
 

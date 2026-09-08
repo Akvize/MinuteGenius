@@ -1,45 +1,23 @@
 """
-Transcription + diarisation avec WhisperKit.
+Transcription + diarisation avec WhisperKit (ou fallback cloud : pyannote.ai).
 Usage: python transcribe.py [--audio audio.wav] [--speakers 4] [--language fr]
 """
 import argparse
 import shutil
 import subprocess
 import sys
-import threading
-import time
-from dataclasses import dataclass
 from pathlib import Path
+
+from minutegenius.stt_backend import Segment, transcribe_audio
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 
 
-@dataclass
-class Segment:
-    start: float
-    end: float
-    speaker: str
-    text: str
-
-
-def spinner(stop_event: threading.Event):
-    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    i = 0
-    start = time.time()
-    while not stop_event.is_set():
-        elapsed = int(time.time() - start)
-        m, s = divmod(elapsed, 60)
-        print(f"\r  {frames[i % len(frames)]}  En cours... {m:02d}:{s:02d}", end="", flush=True)
-        i += 1
-        time.sleep(0.1)
-    print("\r" + " " * 30 + "\r", end="", flush=True)
-
-
 def check_ffmpeg():
     if shutil.which("ffmpeg") is None:
         print("Erreur : ffmpeg est requis pour convertir les fichiers audio/vidéo.")
-        print("Installe-le avec : brew install ffmpeg")
+        print("Installe-le avec : brew install ffmpeg (macOS) ou le gestionnaire de paquets de ton OS (Linux/Windows).")
         sys.exit(1)
 
 
@@ -69,40 +47,6 @@ def resolve_audio(input_path: Path) -> Path:
     print(f"Erreur : format '{suffix}' non supporté.")
     print(f"Formats acceptés : {', '.join(sorted(AUDIO_EXTENSIONS | VIDEO_EXTENSIONS))}")
     sys.exit(1)
-
-
-def run_whisperkit(audio_path: Path, language: str, num_speakers: int | None, model: str | None) -> str:
-    cmd = [
-        "whisperkit-cli", "transcribe",
-        "--audio-path", str(audio_path),
-        "--language", language,
-        "--diarization",
-        "--skip-special-tokens",
-    ]
-    if model:
-        cmd += ["--model", model]
-    if num_speakers:
-        cmd += ["--diarization-num-speakers", str(num_speakers)]
-
-    print(f"Transcription de {audio_path.name}...")
-    stop = threading.Event()
-    t = threading.Thread(target=spinner, args=(stop,), daemon=True)
-    t.start()
-
-    t_start = time.time()
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    elapsed = time.time() - t_start
-
-    stop.set()
-    t.join()
-
-    if result.returncode != 0:
-        print(result.stderr[-500:], file=sys.stderr)
-        sys.exit(1)
-
-    m, s = divmod(int(elapsed), 60)
-    print(f"  Terminé en {m:02d}:{s:02d}")
-    return result.stdout
 
 
 def _find_start_idx(parts: list[str]) -> int | None:
@@ -186,6 +130,8 @@ def main():
                         help="Modèle Whisper (auto si non spécifié)")
     parser.add_argument("--speakers-map", default=None,
                         help="Noms des locuteurs, ex: \"A:Mickael,B:Slimane\"")
+    parser.add_argument("--cloud", action="store_true",
+                        help="Force la transcription cloud (pyannote.ai) même si whisperkit-cli est disponible")
     args = parser.parse_args()
 
     input_path = Path(args.audio)
@@ -200,7 +146,7 @@ def main():
             speakers_map[key.strip()] = name.strip()
 
     audio_path = resolve_audio(input_path)
-    raw = run_whisperkit(audio_path, args.language, args.speakers, args.model)
+    raw = transcribe_audio(audio_path, args.language, args.speakers, args.model, force_cloud=args.cloud)
     segments = parse_diarization_output(raw)
 
     if not segments:

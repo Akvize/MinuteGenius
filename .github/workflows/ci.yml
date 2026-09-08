@@ -8,9 +8,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Unit tests only exercise the pure parsing/formatting functions — they don't
-    # need ffmpeg/whisperkit-cli, so a Linux runner is enough even though the
-    # tool itself is macOS-only (see README).
+    # Unit tests cover the pure parsing/formatting functions plus the cloud
+    # transcription fallback in stt_backend.py (network and subprocess calls
+    # mocked) — none of it needs ffmpeg/whisperkit-cli or real API keys, so a
+    # Linux runner is enough even though whisperkit-cli itself is macOS-only
+    # (see README).
     steps:
       - uses: actions/checkout@v4
 

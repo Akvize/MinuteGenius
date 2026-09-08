@@ -1,4 +1,6 @@
-from minutegenius.meeting import _fmt_time, _hamming, _parse_speaker_line, parse_segments
+import subprocess
+
+from minutegenius.meeting import _fmt_time, _hamming, _parse_speaker_line, _wav_is_valid, parse_segments
 
 
 def test_parse_speaker_line_simple_filename():
@@ -49,3 +51,27 @@ def test_parse_segments_groups_by_speaker(tmp_path):
     segments = parse_segments(transcript)
     assert set(segments.keys()) == {"SPEAKER_00", "SPEAKER_01"}
     assert segments["SPEAKER_00"] == [(0.00, 2.50), (3.50, 1.00)]
+
+
+def test_wav_is_valid_true_for_real_duration(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda cmd, capture_output, text: type("R", (), {"returncode": 0, "stdout": "3.4\n"})(),
+    )
+    assert _wav_is_valid(tmp_path / "audio.wav") is True
+
+
+def test_wav_is_valid_false_when_ffprobe_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda cmd, capture_output, text: type("R", (), {"returncode": 1, "stdout": ""})(),
+    )
+    assert _wav_is_valid(tmp_path / "audio.wav") is False
+
+
+def test_wav_is_valid_false_for_zero_duration(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda cmd, capture_output, text: type("R", (), {"returncode": 0, "stdout": "N/A\n"})(),
+    )
+    assert _wav_is_valid(tmp_path / "audio.wav") is False

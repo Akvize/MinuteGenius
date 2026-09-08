@@ -71,7 +71,8 @@ Given a meeting video, MinuteGenius runs a 6-step pipeline:
    video-call chrome (participant tiles, names, toolbars).
 3. **Transcription + diarization** — [WhisperKit](https://github.com/argmaxinc/WhisperKit)
    runs fully on-device (CoreML / Neural Engine) to transcribe and separate
-   speakers.
+   speakers on Mac; falls back to a cloud path ([pyannote.ai](https://www.pyannote.ai))
+   elsewhere — see Requirements.
 4. **Speaker identification** — for each detected speaker, the vision model
    looks at frames from their longest speaking turns to put a name on them
    (lip movement + who the call UI highlights), with an interactive
@@ -89,19 +90,41 @@ pipeline.
 
 ## Requirements
 
-- **macOS on Apple Silicon.** WhisperKit uses CoreML to run on the Neural
-  Engine — this is the one piece that makes the pipeline fast and fully
-  on-device, and it's currently macOS-only. There's no Linux/Windows support
-  planned for the transcription step in the near term (contributions
-  swapping in a cross-platform backend are welcome — see
-  [CONTRIBUTING.md](CONTRIBUTING.md)).
-- `ffmpeg` and [`whisperkit-cli`](https://github.com/argmaxinc/WhisperKit):
+- **macOS on Apple Silicon (recommended), or any OS via a cloud fallback.**
+  WhisperKit uses CoreML to run fast and fully on-device on the Neural
+  Engine, but it's macOS-only. On Windows, Linux, or an Intel Mac,
+  MinuteGenius automatically falls back to a cloud transcription+diarization
+  path instead — see "Windows / Linux (no WhisperKit)" below.
+- `ffmpeg` (required on every platform):
   ```bash
-  brew install ffmpeg whisperkit-cli
+  brew install ffmpeg   # macOS
+  # or apt install ffmpeg / your OS's package manager on Linux/Windows
+  ```
+- [`whisperkit-cli`](https://github.com/argmaxinc/WhisperKit) (macOS only, optional — enables the fast on-device path; skip it to use the cloud fallback):
+  ```bash
+  brew install whisperkit-cli
   ```
 - An API key for any OpenAI-compatible LLM endpoint (used for steps 2, 4 and
   6 — vision analysis, speaker ID, and write-up). Any provider works:
   OpenRouter, Groq, a local Ollama/vLLM server, etc.
+
+### Windows / Linux (no WhisperKit)
+
+WhisperKit only runs on Apple Silicon (CoreML). On Windows, Linux, or an
+Intel Mac, MinuteGenius automatically falls back to a cloud path when
+`whisperkit-cli` isn't found on `PATH`:
+
+- **Transcription + diarization**, in a single call, via [pyannote.ai](https://www.pyannote.ai)'s
+  STT Orchestration API (speaker-attributed transcription).
+
+Set `PYANNOTE_API_KEY` in your `.env` (see `.env.example`) to use it. This is
+independent of `AI_API`/`AI_KEY`, which configure the summarization model and
+may point at a different provider.
+
+Tradeoffs versus WhisperKit: per-minute cloud cost, meeting audio leaves the
+machine (a consideration for confidential meetings), and it requires network
+access. WhisperKit remains free, on-device, and the default whenever it's
+installed — this path only kicks in when it's absent.
 
 ## Install
 
@@ -113,6 +136,17 @@ cp .env.example .env   # fill in AI_API / AI_KEY
 ```
 
 ## Usage
+
+### Verify your setup — `check`
+
+Validates your `.env` and tests connectivity to every configured service
+(AI_API/AI_API2, pyannote.ai) before you spend time/money on a real run:
+
+```bash
+uv run minutegenius check
+# also test AI_MODEL_WRITER, used by step 6's lexicon-based correction:
+uv run minutegenius check --lexicon my-lexicon.md
+```
 
 ### Full pipeline — `meeting`
 

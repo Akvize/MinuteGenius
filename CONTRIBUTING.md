@@ -16,9 +16,10 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-The test suite only covers pure parsing/formatting functions (WebVTT parsing,
-WhisperKit output parsing, timestamp formatting) — it doesn't require
-`ffmpeg`/`whisperkit-cli` or an API key.
+The test suite covers pure parsing/formatting functions (WebVTT parsing,
+WhisperKit output parsing, timestamp formatting) plus the cloud transcription
+fallback in `stt_backend.py` (network and subprocess calls mocked) — it
+doesn't require `ffmpeg`/`whisperkit-cli` or real API keys.
 
 ## Scope
 
@@ -32,5 +33,5 @@ discussion first.
 
 Please include:
 - OS/chip (macOS version, Apple Silicon vs Intel)
-- `whisperkit-cli --version` and `ffmpeg -version`
+- `whisperkit-cli --version` (if installed) and `ffmpeg -version`
 - The exact command you ran and the full error output

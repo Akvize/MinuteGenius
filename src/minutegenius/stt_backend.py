@@ -100,7 +100,8 @@ PYANNOTE_UPLOAD_TIMEOUT_S = 600  # generous — uploads the full original audio 
 # l'autre choix possible). L'API pyannote.ai n'accepte pas de langue en paramètre
 # (détection automatique) : ce modèle maximise les chances de bien couvrir la
 # langue réellement parlée, --language n'étant pas transmis sur ce chemin cloud.
-PYANNOTE_TRANSCRIPTION_MODEL = "faster-whisper-large-v3-turbo"
+# Configurable via PYANNOTE_TRANSCRIPTION_MODEL (voir .env.example).
+PYANNOTE_TRANSCRIPTION_MODEL_DEFAULT = "faster-whisper-large-v3-turbo"
 
 
 def _pyannote_headers() -> dict:
@@ -124,10 +125,11 @@ def transcribe_pyannote(audio_path: Path, num_speakers: int | None) -> list[Segm
         put_resp = requests.put(upload_url, data=f, timeout=PYANNOTE_UPLOAD_TIMEOUT_S)
     put_resp.raise_for_status()
 
+    transcription_model = os.environ.get("PYANNOTE_TRANSCRIPTION_MODEL") or PYANNOTE_TRANSCRIPTION_MODEL_DEFAULT
     body: dict = {
         "url": media_key,
         "transcription": True,
-        "transcriptionConfig": {"model": PYANNOTE_TRANSCRIPTION_MODEL},
+        "transcriptionConfig": {"model": transcription_model},
     }
     if num_speakers:
         body["numSpeakers"] = num_speakers

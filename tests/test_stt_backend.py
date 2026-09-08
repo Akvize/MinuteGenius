@@ -75,7 +75,7 @@ def test_transcribe_pyannote_full_flow(monkeypatch, tmp_path):
         if url.endswith("/diarize"):
             assert json["numSpeakers"] == 2
             assert json["transcription"] is True
-            assert json["transcriptionConfig"] == {"model": stt_backend.PYANNOTE_TRANSCRIPTION_MODEL}
+            assert json["transcriptionConfig"] == {"model": stt_backend.PYANNOTE_TRANSCRIPTION_MODEL_DEFAULT}
             return _FakeResponse({"jobId": "job-123", "status": "created"})
         raise AssertionError(f"unexpected POST {url}")
 
@@ -109,6 +109,28 @@ def test_transcribe_pyannote_full_flow(monkeypatch, tmp_path):
     for method, url, *_ in calls:
         if method == "POST":
             assert "Bearer test-key" in _headers_for(calls, url)
+
+
+def test_transcribe_pyannote_uses_transcription_model_from_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("PYANNOTE_API_KEY", "test-key")
+    monkeypatch.setenv("PYANNOTE_TRANSCRIPTION_MODEL", "parakeet-tdt-0.6b-v3")
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"fake audio bytes")
+
+    def fake_post(url, json=None, headers=None, **kwargs):
+        if url.endswith("/media/input"):
+            return _FakeResponse({"url": "https://upload.example.com/presigned"})
+        assert json["transcriptionConfig"] == {"model": "parakeet-tdt-0.6b-v3"}
+        return _FakeResponse({"jobId": "job-123", "status": "created"})
+
+    monkeypatch.setattr(stt_backend.requests, "post", fake_post)
+    monkeypatch.setattr(stt_backend.requests, "put", lambda url, data=None, **kw: _FakeResponse({}))
+    monkeypatch.setattr(stt_backend.requests, "get", lambda url, headers=None, **kw: _FakeResponse({
+        "jobId": "job-123", "status": "succeeded", "output": {"turnLevelTranscription": []},
+    }))
+    monkeypatch.setattr(stt_backend.time, "sleep", lambda _: None)
+
+    stt_backend.transcribe_pyannote(audio_path, num_speakers=None)
 
 
 def test_transcribe_pyannote_raises_on_job_failure(monkeypatch, tmp_path):

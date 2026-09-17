@@ -150,9 +150,9 @@ def _wav_is_valid(wav_path: Path) -> bool:
         return False
 
 
-def extract_audio(video_path: Path, temp_dir: Path) -> Path:
-    """Extrait la piste audio en WAV 16kHz mono pour WhisperKit."""
-    wav_path = temp_dir / f"{video_path.stem}.wav"
+def extract_audio(video_path: Path, output_dir: Path) -> Path:
+    """Extrait la piste audio en WAV 16kHz mono pour WhisperKit, conservée comme artefact dans output_dir."""
+    wav_path = output_dir / f"{video_path.stem}_audio.wav"
     if wav_path.exists():
         if _wav_is_valid(wav_path):
             return wav_path
@@ -167,11 +167,11 @@ def extract_audio(video_path: Path, temp_dir: Path) -> Path:
 
 
 def transcribe_video(
-    video_path: Path, output_path: Path, temp_dir: Path, language: str = "fr", num_speakers: int | None = None,
+    video_path: Path, output_path: Path, output_dir: Path, language: str = "fr", num_speakers: int | None = None,
     force_cloud: bool = False,
 ) -> str:
     """Extrait l'audio puis lance la transcription+diarisation (WhisperKit ou fallback cloud). Sauvegarde la sortie brute."""
-    wav_path = extract_audio(video_path, temp_dir)
+    wav_path = extract_audio(video_path, output_dir)
     print(f"  Audio extrait : {wav_path}")
 
     raw = stt_backend.transcribe_audio(wav_path, language, num_speakers, model=None, force_cloud=force_cloud)
@@ -838,6 +838,10 @@ def main():
                         help="Relance uniquement la validation interactive des locuteurs à partir de "
                              "l'identification déjà en cache (étape 4), sans réémettre d'appels cloud "
                              "(pyannote.ai / OpenRouter)")
+    parser.add_argument("--clean", action="store_true",
+                        help="Supprime les fichiers intermédiaires (frames extraites, cache) à la fin du "
+                             "pipeline. Par défaut ils sont conservés pour permettre une relance rapide "
+                             "(--from-step / --only-step).")
     args = parser.parse_args()
 
     video_path = args.video.expanduser().resolve()
@@ -924,7 +928,7 @@ def main():
         print("Étape 3 : transcription déjà effectuée, chargement...")
     else:
         print("Étape 3 : transcription + diarisation...")
-        transcribe_video(video_path, transcript_raw, temp_dir, language=args.language, num_speakers=args.speakers, force_cloud=args.cloud)
+        transcribe_video(video_path, transcript_raw, output_dir, language=args.language, num_speakers=args.speakers, force_cloud=args.cloud)
         print(f"  → {transcript_raw}")
     print()
 
@@ -989,8 +993,11 @@ def main():
         generate_minutes(timeline_md, lexicon_path, minutes_md, max_blocks=args.max_clean_blocks)
     print()
 
-    # Nettoyage — le rapport final est généré, les fichiers volumineux ne servent plus
-    cleanup_temp_files(temp_dir)
+    # Nettoyage — le rapport final est généré, les frames extraites ne servent plus
+    if args.clean:
+        cleanup_temp_files(temp_dir)
+    else:
+        print(f"  Fichiers temporaires conservés ({temp_dir}) — relancez avec --clean pour les supprimer.")
 
 
 if __name__ == "__main__":

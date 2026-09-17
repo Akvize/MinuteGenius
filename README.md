@@ -167,6 +167,7 @@ Useful options:
 --from-step 4                 # rerun from step N onward (e.g. after fixing a mis-ID)
 --only-step 6                 # rerun a single step (e.g. after editing the lexicon)
 --clean                       # delete intermediary files (extracted frames cache) when done
+--extract-audio-only          # only extract the audio track (*_audio.wav) and exit
 ```
 
 The pipeline writes intermediate JSON/markdown files at each step

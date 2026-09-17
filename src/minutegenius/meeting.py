@@ -842,6 +842,9 @@ def main():
                         help="Supprime les fichiers intermédiaires (frames extraites, cache) à la fin du "
                              "pipeline. Par défaut ils sont conservés pour permettre une relance rapide "
                              "(--from-step / --only-step).")
+    parser.add_argument("--extract-audio-only", action="store_true",
+                        help="Extrait uniquement la piste audio (WAV 16kHz mono) et quitte, "
+                             "sans lancer le reste du pipeline (frames, transcription, etc.).")
     args = parser.parse_args()
 
     video_path = args.video.expanduser().resolve()
@@ -851,6 +854,16 @@ def main():
 
     output_dir = args.output_dir or video_path.parent / f"{video_path.stem}_meeting"
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.extract_audio_only:
+        print(f"Vidéo    : {video_path}")
+        print(f"Sortie   : {output_dir}")
+        print()
+        print("Extraction de la piste audio...")
+        wav_path = extract_audio(video_path, output_dir)
+        print(f"  → {wav_path}")
+        return
+
     temp_dir = video_temp_dir(video_path)
 
     print(f"Vidéo    : {video_path}")

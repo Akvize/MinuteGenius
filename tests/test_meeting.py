@@ -1,6 +1,46 @@
 import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 
-from minutegenius.meeting import _fmt_time, _hamming, _parse_speaker_line, _wav_is_valid, parse_segments
+from minutegenius import meeting
+from minutegenius.meeting import (
+    _fmt_time,
+    _hamming,
+    _parse_speaker_line,
+    _wav_is_valid,
+    analyze_frame,
+    parse_segments,
+    validate_speakers_interactive,
+)
+
+
+def test_analyze_frame_tolerates_unescaped_control_char_in_string(monkeypatch, tmp_path):
+    """Le modèle vision insère parfois un vrai retour à la ligne dans une valeur de string
+    au lieu de l'échapper en \\n, ce qui casse json.loads en mode strict."""
+    raw_content = (
+        '{"shared_content": true, "clearly_visible": "Titre\ndetails", "partially_visible": null}'
+    )
+    fake_response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=raw_content))]
+    )
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **kwargs: fake_response)
+        )
+    )
+    monkeypatch.setattr(meeting, "get_client_image", lambda: fake_client)
+    monkeypatch.setenv("AI_MODEL_IMAGE", "fake-model")
+
+    image_path = tmp_path / "frame.jpg"
+    image_path.write_bytes(b"\xff\xd8\xff\xd9")  # JPEG minimal valide pour read_bytes()
+
+    result = analyze_frame(image_path)
+
+    assert result == {
+        "shared_content": True,
+        "clearly_visible": "Titre\ndetails",
+        "partially_visible": None,
+    }
 
 
 def test_parse_speaker_line_simple_filename():
@@ -75,3 +115,37 @@ def test_wav_is_valid_false_for_zero_duration(monkeypatch, tmp_path):
         lambda cmd, capture_output, text: type("R", (), {"returncode": 0, "stdout": "N/A\n"})(),
     )
     assert _wav_is_valid(tmp_path / "audio.wav") is False
+
+
+def test_validate_speakers_interactive_accepts_free_text_name(monkeypatch, tmp_path):
+    """Un participant absent de la liste proposée (jamais isolé comme locuteur principal
+    par le modèle vision) doit pouvoir être saisi librement plutôt que rejeté."""
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: None)
+    answers = iter(["Anthime Ferrieu"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+
+    speakers_map = {"SPEAKER_00": "Ferdinand Rousseau"}
+    all_segments = {"SPEAKER_00": [(0.0, 10.0)]}
+    output_path = tmp_path / "speakers.json"
+
+    updated = validate_speakers_interactive(speakers_map, all_segments, output_path)
+
+    assert updated["SPEAKER_00"] == "Anthime Ferrieu"
+
+
+def test_validate_speakers_interactive_lists_known_roster_as_menu_option(monkeypatch, tmp_path, capsys):
+    """Les participants vus sur les vignettes mais jamais retenus comme locuteur principal
+    (known_roster) doivent apparaître dans le menu numéroté, pas seulement en saisie libre."""
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr("builtins.input", lambda prompt: "2")
+
+    speakers_map = {"SPEAKER_00": "Ferdinand Rousseau"}
+    all_segments = {"SPEAKER_00": [(0.0, 10.0)]}
+    output_path = tmp_path / "speakers.json"
+
+    updated = validate_speakers_interactive(
+        speakers_map, all_segments, output_path, known_roster=["Anthime Ferrieu"]
+    )
+
+    assert "2. Anthime Ferrieu" in capsys.readouterr().out
+    assert updated["SPEAKER_00"] == "Anthime Ferrieu"

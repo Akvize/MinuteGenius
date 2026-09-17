@@ -169,9 +169,11 @@ Useful options:
 ```
 
 The pipeline writes intermediate JSON/markdown files at each step
-(`*_frames_analyzed.json`, `*_transcript_raw.txt`, `*_speakers.json`,
-`*_report.md`, `*_report_clean.md`) so you can inspect or fix any of them by
-hand before continuing.
+(`*_frames_analyzed.json`, `*_transcript_raw.txt`, `*_speaker_map.json`,
+`*_participants.json`, `*_timeline.md`, `*_minutes.md`) so you can inspect or
+fix any of them by hand before continuing. `*_timeline.md` is the raw
+chronological log (speech + on-screen content interleaved); `*_minutes.md` is
+the final LLM-written, lexicon-corrected meeting summary.
 
 ### Just the transcript — `transcribe`
 

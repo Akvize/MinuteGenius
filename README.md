@@ -166,12 +166,21 @@ Useful options:
 --speakers 4                  # number of speakers, auto-detected if omitted
 --from-step 4                 # rerun from step N onward (e.g. after fixing a mis-ID)
 --only-step 6                 # rerun a single step (e.g. after editing the lexicon)
+--clean                       # delete intermediary files (extracted frames cache) when done
+--extract-audio-only          # only extract the audio track (*_audio.wav) and exit
 ```
 
 The pipeline writes intermediate JSON/markdown files at each step
-(`*_frames_analyzed.json`, `*_transcript_raw.txt`, `*_speakers.json`,
-`*_report.md`, `*_report_clean.md`) so you can inspect or fix any of them by
-hand before continuing.
+(`*_frames_analyzed.json`, `*_transcript_raw.txt`, `*_speaker_map.json`,
+`*_participants.json`, `*_timeline.md`, `*_minutes.md`) as well as the
+extracted audio track (`*_audio.wav`) so you can inspect or fix any of them by
+hand before continuing. `*_timeline.md` is the raw chronological log (speech +
+on-screen content interleaved); `*_minutes.md` is the final LLM-written,
+lexicon-corrected meeting summary.
+
+By default the extracted-frames cache (used to resume with `--from-step` /
+`--only-step` without re-decoding the video) is kept on disk between runs;
+pass `--clean` to delete it once the pipeline finishes.
 
 ### Just the transcript — `transcribe`
 

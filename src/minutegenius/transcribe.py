@@ -1,6 +1,6 @@
 """
-Transcription + diarisation avec WhisperKit (ou fallback cloud : pyannote.ai).
-Usage: python transcribe.py [--audio audio.wav] [--speakers 4] [--language fr]
+Transcription + diarisation avec argmax-cli / whisperkit-cli (ou fallback cloud : pyannote.ai).
+Usage: python transcribe.py [--audio audio.wav] [--speakers 4] [--language auto|fr|en…]
 """
 import argparse
 import shutil
@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from minutegenius.stt_backend import Segment, transcribe_audio
+from minutegenius.stt_backend import Segment, clean_text, transcribe_audio
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
@@ -68,7 +68,7 @@ def _find_start_idx(parts: list[str]) -> int | None:
 
 def parse_diarization_output(raw: str) -> list[Segment]:
     """
-    Parse le format WhisperKit :
+    Parse la sortie RTTM étendue (argmax-cli / whisperkit-cli) :
     SPEAKER <file (peut avoir des espaces)> <ch> <start> <dur> <text> <NA> <label> <NA> <NA>
     """
     segments = []
@@ -87,7 +87,7 @@ def parse_diarization_output(raw: str) -> list[Segment]:
             end = start + duration
             speaker = parts[-3]
             text = " ".join(parts[start_idx + 2:-4]).strip()
-            text = text.replace(" '", "'")
+            text = clean_text(text)
             segments.append(Segment(start=start, end=end, speaker=speaker, text=text))
         except (ValueError, IndexError):
             continue
@@ -123,15 +123,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--audio", default="audio.wav")
     parser.add_argument("--output", default="transcript.txt")
-    parser.add_argument("--language", default="fr")
+    parser.add_argument("--language", default="auto",
+                        help="Code langue (fr, en…) ou 'auto' pour la détection automatique (défaut : auto)")
     parser.add_argument("--speakers", type=int, default=None,
                         help="Nombre de locuteurs (auto si non spécifié)")
     parser.add_argument("--model", default=None,
-                        help="Modèle Whisper (auto si non spécifié)")
+                        help="Modèle Whisper, ex : large-v3-v20240930_626MB (auto si non spécifié)")
     parser.add_argument("--speakers-map", default=None,
                         help="Noms des locuteurs, ex: \"A:Mickael,B:Slimane\"")
     parser.add_argument("--cloud", action="store_true",
-                        help="Force la transcription cloud (pyannote.ai) même si whisperkit-cli est disponible")
+                        help="Force la transcription cloud (pyannote.ai) même si argmax-cli/whisperkit-cli est disponible")
     args = parser.parse_args()
 
     input_path = Path(args.audio)

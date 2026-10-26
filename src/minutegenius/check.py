@@ -1,6 +1,6 @@
 """
 Vérifie que l'environnement est prêt pour les commandes meeting/transcribe :
-dépendances système (ffmpeg, whisperkit-cli), variables d'environnement
+dépendances système (ffmpeg, argmax-cli / whisperkit-cli), variables d'environnement
 requises, et connectivité aux APIs configurées (AI_API/AI_API2, pyannote.ai).
 
 Usage: minutegenius check [--lexicon fichier.md]
@@ -91,7 +91,7 @@ def main() -> None:
     args = parser.parse_args()
 
     print("Dépendances système :")
-    for tool, required in (("ffmpeg", True), ("ffprobe", True), ("whisperkit-cli", False)):
+    for tool, required in (("ffmpeg", True), ("ffprobe", True), *((t, False) for t in stt_backend.LOCAL_TRANSCRIBER_CANDIDATES)):
         found = shutil.which(tool) is not None
         marker = "✓" if found else ("✗" if required else "–")
         print(f"  {marker} {tool}{'' if found else ' (introuvable)' if required else ' (absent, optionnel)'}")
@@ -114,8 +114,9 @@ def main() -> None:
     print()
 
     print("Transcription + diarisation :")
-    if stt_backend.whisperkit_available():
-        print("  ✓ whisperkit-cli détecté — le fallback cloud pyannote.ai ne sera pas utilisé.")
+    transcriber = stt_backend.find_local_transcriber()
+    if transcriber:
+        print(f"  ✓ {transcriber} détecté (local) — le fallback cloud pyannote.ai ne sera pas utilisé.")
     else:
         check_pyannote_connection()
         print("  ✓ pyannote.ai (PYANNOTE_API_KEY)")

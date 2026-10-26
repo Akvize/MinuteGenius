@@ -69,9 +69,10 @@ Given a meeting video, MinuteGenius runs a 6-step pipeline:
 2. **Screen content analysis** — a vision model describes what's actually
    presented in each keyframe (slide content, doc, dashboard...), ignoring
    video-call chrome (participant tiles, names, toolbars).
-3. **Transcription + diarization** — [WhisperKit](https://github.com/argmaxinc/WhisperKit)
-   runs fully on-device (CoreML / Neural Engine) to transcribe and separate
-   speakers on Mac; falls back to a cloud path ([pyannote.ai](https://www.pyannote.ai))
+3. **Transcription + diarization** — `argmax-cli` ([argmax-oss-swift](https://github.com/argmaxinc/argmax-oss-swift):
+   WhisperKit + SpeakerKit) runs fully on-device (CoreML / Neural Engine) to
+   transcribe and separate speakers on Mac, with automatic language detection
+   (handy for bilingual meetings); falls back to a cloud path ([pyannote.ai](https://www.pyannote.ai))
    elsewhere — see Requirements.
 4. **Speaker identification** — for each detected speaker, the vision model
    looks at frames from their longest speaking turns to put a name on them
@@ -91,28 +92,35 @@ pipeline.
 ## Requirements
 
 - **macOS on Apple Silicon (recommended), or any OS via a cloud fallback.**
-  WhisperKit uses CoreML to run fast and fully on-device on the Neural
-  Engine, but it's macOS-only. On Windows, Linux, or an Intel Mac,
-  MinuteGenius automatically falls back to a cloud transcription+diarization
-  path instead — see "Windows / Linux (no WhisperKit)" below.
+  argmax-cli (WhisperKit + SpeakerKit) uses CoreML to run fast and fully
+  on-device on the Neural Engine, but it's macOS-only (macOS 14+). On Windows,
+  Linux, or an Intel Mac, MinuteGenius automatically falls back to a cloud
+  transcription+diarization path instead — see "Windows / Linux (no local
+  transcriber)" below.
 - `ffmpeg` (required on every platform):
   ```bash
   brew install ffmpeg   # macOS
   # or apt install ffmpeg / your OS's package manager on Linux/Windows
   ```
-- [`whisperkit-cli`](https://github.com/argmaxinc/WhisperKit) (macOS only, optional — enables the fast on-device path; skip it to use the cloud fallback):
+- `argmax-cli` from [argmax-oss-swift](https://github.com/argmaxinc/argmax-oss-swift)
+  (macOS only, optional — enables the fast on-device path; skip it to use the
+  cloud fallback). Build it from source (Xcode 16+):
   ```bash
-  brew install whisperkit-cli
+  git clone https://github.com/argmaxinc/argmax-oss-swift && cd argmax-oss-swift
+  swift build -c release --product argmax-cli
+  cp .build/release/argmax-cli "$(brew --prefix)/bin/"   # already on PATH, no sudo
   ```
+  Alternatively, `brew install whisperkit-cli` installs the same binary under
+  another name; MinuteGenius uses it when `argmax-cli` isn't on `PATH`.
 - An API key for any OpenAI-compatible LLM endpoint (used for steps 2, 4 and
   6 — vision analysis, speaker ID, and write-up). Any provider works:
   OpenRouter, Groq, a local Ollama/vLLM server, etc.
 
-### Windows / Linux (no WhisperKit)
+### Windows / Linux (no local transcriber)
 
-WhisperKit only runs on Apple Silicon (CoreML). On Windows, Linux, or an
-Intel Mac, MinuteGenius automatically falls back to a cloud path when
-`whisperkit-cli` isn't found on `PATH`:
+argmax-cli / whisperkit-cli only run on Apple Silicon (CoreML). On Windows,
+Linux, or an Intel Mac, MinuteGenius automatically falls back to a cloud path
+when neither `argmax-cli` nor `whisperkit-cli` is found on `PATH`:
 
 - **Transcription + diarization**, in a single call, via [pyannote.ai](https://www.pyannote.ai)'s
   STT Orchestration API (speaker-attributed transcription).
@@ -121,10 +129,11 @@ Set `PYANNOTE_API_KEY` in your `.env` (see `.env.example`) to use it. This is
 independent of `AI_API`/`AI_KEY`, which configure the summarization model and
 may point at a different provider.
 
-Tradeoffs versus WhisperKit: per-minute cloud cost, meeting audio leaves the
-machine (a consideration for confidential meetings), and it requires network
-access. WhisperKit remains free, on-device, and the default whenever it's
-installed — this path only kicks in when it's absent.
+Tradeoffs versus the local path: per-minute cloud cost, meeting audio leaves
+the machine (a consideration for confidential meetings), and it requires
+network access. The local transcriber remains free, on-device, and the default
+whenever it's installed — this path only kicks in when it's absent (or when
+you pass `--cloud`).
 
 ## Install
 
@@ -162,8 +171,10 @@ Useful options:
 
 ```bash
 --output-dir ./out          # defaults to <video_stem>_meeting/
---language fr                # transcription language (default: fr)
+--language fr                # force the transcription language (default: auto-detect)
+--model large-v3-v20240930_626MB  # Whisper model (best multilingual accuracy; auto if omitted)
 --speakers 4                  # number of speakers, auto-detected if omitted
+--cloud                       # force the pyannote.ai cloud path
 --from-step 4                 # rerun from step N onward (e.g. after fixing a mis-ID)
 --only-step 6                 # rerun a single step (e.g. after editing the lexicon)
 --clean                       # delete intermediary files (extracted frames cache) when done
@@ -190,9 +201,10 @@ If you only want a diarized transcript without the full report pipeline
 ```bash
 uv run minutegenius transcribe --audio recording.mov --output transcript.txt
 
-# with known speaker names
+# with known speaker names (labels are A, B… with argmax-cli,
+# SPEAKER_00, SPEAKER_01… with the cloud fallback)
 uv run minutegenius transcribe --audio recording.mov \
-  --speakers-map "SPEAKER_00:Alice,SPEAKER_01:Bob"
+  --speakers-map "A:Alice,B:Bob"
 ```
 
 ### WebVTT → Markdown — `vtt`
@@ -206,7 +218,8 @@ uv run minutegenius vtt captions.vtt --output notes.md
 
 ## Limitations
 
-- macOS on Apple Silicon only (see [Requirements](#requirements)).
+- Fully on-device transcription requires macOS on Apple Silicon; other
+  platforms use the paid pyannote.ai cloud fallback (see [Requirements](#requirements)).
 - Speaker identification relies on visual cues (lip movement, UI highlighting)
   — it works well for typical video calls but isn't infallible; that's why
   there's an interactive validation step before the report is generated.
@@ -219,7 +232,8 @@ uv run minutegenius vtt captions.vtt --output notes.md
 
 ## Credits
 
-Speech recognition and diarization powered by
-[WhisperKit](https://github.com/argmaxinc/WhisperKit) (Argmax).
+On-device speech recognition and diarization powered by
+[argmax-oss-swift](https://github.com/argmaxinc/argmax-oss-swift) (WhisperKit +
+SpeakerKit, by Argmax).
 
 Built by [Akvize](https://akvize.com).

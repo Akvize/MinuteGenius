@@ -1,18 +1,18 @@
 """
-Point d'entrée unifié : minutegenius {check,meeting,transcribe,vtt} ...
+Unified entry point: minutegenius {check,meeting,transcribe,vtt} ...
 
-Chaque sous-commande délègue directement au argparse du module correspondant
-(meeting.py, transcribe.py, vtt.py), qui reste utilisable indépendamment.
+Each subcommand delegates directly to the argparse of the matching module
+(meeting.py, transcribe.py, vtt.py), which can still be used on its own.
 """
 import sys
 
 USAGE = """usage: minutegenius <command> [options]
 
 Commands:
-  check        Vérifie la configuration et la connectivité (AI_API, pyannote.ai...)
-  meeting      Génère un compte-rendu intelligent à partir d'une vidéo de réunion
-  transcribe   Transcrit + diarise un fichier audio/vidéo (sans le pipeline complet)
-  vtt          Convertit un fichier de sous-titres WebVTT en Markdown
+  check        Check configuration and connectivity (AI_API, pyannote.ai...)
+  meeting      Generate smart minutes from a meeting video
+  transcribe   Transcribe + diarize an audio/video file (without the full pipeline)
+  vtt          Convert a WebVTT subtitle file to Markdown
 
 Run 'minutegenius <command> --help' for command-specific options.
 """
@@ -27,13 +27,13 @@ def main() -> None:
 
     command, rest = sys.argv[1], sys.argv[2:]
     if command not in COMMANDS:
-        print(f"Erreur : commande inconnue '{command}'.\n", file=sys.stderr)
+        print(f"Error: unknown command '{command}'.\n", file=sys.stderr)
         print(USAGE, file=sys.stderr)
         sys.exit(1)
 
-    # Chaque sous-module parse son propre sys.argv — on le reconstruit
-    # pour que ses messages d'usage/erreur restent cohérents (argparse
-    # affiche prog=sys.argv[0]).
+    # Each submodule parses its own sys.argv — rebuild it so its
+    # usage/error messages stay consistent (argparse displays
+    # prog=sys.argv[0]).
     sys.argv = [f"minutegenius {command}"] + rest
 
     if command == "check":

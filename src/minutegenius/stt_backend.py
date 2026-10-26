@@ -1,15 +1,15 @@
 """
-Backend de transcription : argmax-cli en local (argmax-oss-swift : WhisperKit +
-SpeakerKit, Mac Apple Silicon) si disponible, sinon fallback cloud pyannote.ai —
-transcription + diarisation en un seul appel (STT Orchestration) — voir
-transcribe_cloud(). Le cloud peut aussi être forcé explicitement via
-transcribe_audio(force_cloud=True), même si un transcripteur local est disponible.
+Transcription backend: local argmax-cli (argmax-oss-swift: WhisperKit +
+SpeakerKit, Apple Silicon Mac) when available, otherwise the pyannote.ai cloud
+fallback — transcription + diarization in a single call (STT Orchestration), see
+transcribe_cloud(). The cloud path can also be forced explicitly with
+transcribe_audio(force_cloud=True), even when a local transcriber is available.
 
-`argmax-cli` et `whisperkit-cli` sont le même binaire (cible ArgmaxCLI du dépôt
-argmax-oss-swift) : mêmes flags, même sortie RTTM étendue :
-    SPEAKER <fichier> 1 <start> <durée> <texte…> <NA> <A|B|…> <NA> <NA>
-On préfère `argmax-cli` (build depuis les sources) et on retombe sur
-`whisperkit-cli` (Homebrew) s'il n'est pas installé.
+`argmax-cli` and `whisperkit-cli` are the same binary (ArgmaxCLI target of the
+argmax-oss-swift repo): same flags, same extended RTTM output:
+    SPEAKER <file> 1 <start> <duration> <text…> <NA> <A|B|…> <NA> <NA>
+We prefer `argmax-cli` (built from source) and fall back to `whisperkit-cli`
+(Homebrew) when it isn't installed.
 """
 import os
 import re
@@ -40,7 +40,7 @@ LOCAL_TRANSCRIBER_CANDIDATES = ("argmax-cli", "whisperkit-cli")
 
 
 def find_local_transcriber() -> str | None:
-    """Premier transcripteur local présent dans le PATH (argmax-cli, puis whisperkit-cli)."""
+    """First local transcriber found on PATH (argmax-cli, then whisperkit-cli)."""
     for name in LOCAL_TRANSCRIBER_CANDIDATES:
         if shutil.which(name):
             return name
@@ -58,10 +58,10 @@ def build_transcribe_cmd(
     num_speakers: int | None = None,
     model: str | None = None,
 ) -> list[str]:
-    """Commande de transcription avec diarisation.
+    """Transcription command with diarization.
 
-    language : code langue ("fr", "en"…) ; "auto" ou None = détection automatique
-    (on omet --language, utile pour les réunions bilingues FR/EN).
+    language: language code ("fr", "en"…); "auto" or None = automatic detection
+    (--language is omitted, useful for bilingual meetings).
     """
     cmd = [
         transcriber, "transcribe",
@@ -82,10 +82,10 @@ _HYPHEN_SPACE = re.compile(r"(?<=\w) -(?=\w)")
 
 
 def clean_text(text: str) -> str:
-    """Corrige les espaces parasites de la tokenisation Whisper.
+    """Fix stray spaces left by Whisper tokenization (mostly in French text).
 
     "J 'ai" -> "J'ai", "Est -ce" -> "Est-ce", "C'est -à -dire" -> "C'est-à-dire".
-    Les tirets de dialogue ("- Tu réponds?") et les tirets espacés ("a - b") sont conservés.
+    Dialogue dashes ("- Tu réponds?") and spaced dashes ("a - b") are left untouched.
     """
     text = text.replace(" '", "'")
     return _HYPHEN_SPACE.sub("-", text)
@@ -98,7 +98,7 @@ def _spinner(stop_event: threading.Event):
     while not stop_event.is_set():
         elapsed = int(time.time() - start)
         m, s = divmod(elapsed, 60)
-        print(f"\r  {frames[i % len(frames)]}  En cours... {m:02d}:{s:02d}", end="", flush=True)
+        print(f"\r  {frames[i % len(frames)]}  Working... {m:02d}:{s:02d}", end="", flush=True)
         i += 1
         time.sleep(0.1)
     print("\r" + " " * 30 + "\r", end="", flush=True)
@@ -109,7 +109,7 @@ def run_local_transcriber(
 ) -> str:
     cmd = build_transcribe_cmd(transcriber, audio_path, language, num_speakers, model)
 
-    print(f"Transcription de {audio_path.name} ({transcriber})...")
+    print(f"Transcribing {audio_path.name} ({transcriber})...")
     stop = threading.Event()
     t = threading.Thread(target=_spinner, args=(stop,), daemon=True)
     t.start()
@@ -126,13 +126,13 @@ def run_local_transcriber(
         sys.exit(1)
 
     m, s = divmod(int(elapsed), 60)
-    print(f"  Terminé en {m:02d}:{s:02d}")
+    print(f"  Done in {m:02d}:{s:02d}")
     return result.stdout
 
 
 def format_as_whisperkit_lines(segments: list[Segment], audio_filename: str) -> str:
-    """Sérialise des segments au format texte brut d'argmax-cli/whisperkit-cli, pour rester
-    compatible avec parse_diarization_output()/_parse_speaker_line() existants."""
+    """Serialize segments in the raw argmax-cli/whisperkit-cli text format, so they stay
+    compatible with the existing parse_diarization_output()/_parse_speaker_line()."""
     lines = []
     for seg in segments:
         text = " ".join(seg.text.split())
@@ -148,11 +148,11 @@ PYANNOTE_POLL_INTERVAL_S = 5
 PYANNOTE_POLL_TIMEOUT_S = 1800  # 30 min
 PYANNOTE_HTTP_TIMEOUT_S = 30
 PYANNOTE_UPLOAD_TIMEOUT_S = 600  # generous — uploads the full original audio file
-# faster-whisper-large-v3-turbo : 99+ langues (vs. 27 pour parakeet-tdt-0.6b-v3,
-# l'autre choix possible). L'API pyannote.ai n'accepte pas de langue en paramètre
-# (détection automatique) : ce modèle maximise les chances de bien couvrir la
-# langue réellement parlée, --language n'étant pas transmis sur ce chemin cloud.
-# Configurable via PYANNOTE_TRANSCRIPTION_MODEL (voir .env.example).
+# faster-whisper-large-v3-turbo: 99+ languages (vs. 27 for parakeet-tdt-0.6b-v3,
+# the other available option). The pyannote.ai API takes no language parameter
+# (automatic detection): this model maximizes the chances of covering the language
+# actually spoken, since --language isn't passed on this cloud path.
+# Configurable via PYANNOTE_TRANSCRIPTION_MODEL (see .env.example).
 PYANNOTE_TRANSCRIPTION_MODEL_DEFAULT = "faster-whisper-large-v3-turbo"
 
 
@@ -161,9 +161,9 @@ def _pyannote_headers() -> dict:
 
 
 def transcribe_pyannote(audio_path: Path, num_speakers: int | None) -> list[Segment]:
-    """Transcrit et diarise un fichier audio en un seul appel pyannote.ai (STT
-    Orchestration : transcription attribuée par locuteur). Retourne les segments
-    de tour de parole (turnLevelTranscription), déjà alignés avec le locuteur."""
+    """Transcribe and diarize an audio file in a single pyannote.ai call (STT
+    Orchestration: speaker-attributed transcription). Returns the speaker-turn
+    segments (turnLevelTranscription), already aligned with their speaker."""
     media_key = f"media://minutegenius-{uuid.uuid4().hex}"
 
     resp = requests.post(
@@ -196,8 +196,8 @@ def transcribe_pyannote(audio_path: Path, num_speakers: int | None) -> list[Segm
     turns = output.get("turnLevelTranscription")
     if turns is None:
         raise RuntimeError(
-            f"Réponse pyannote.ai inattendue pour le job {job_id} : "
-            "'turnLevelTranscription' absent (transcription non activée côté API ?)."
+            f"Unexpected pyannote.ai response for job {job_id}: "
+            "'turnLevelTranscription' missing (transcription not enabled on the API side?)."
         )
     return [
         Segment(start=t["start"], end=t["end"], speaker=t.get("speaker") or "SPEAKER_00", text=t["text"].strip())
@@ -219,29 +219,29 @@ def _poll_pyannote_job(job_id: str) -> dict:
         if status == "succeeded":
             return job["output"]
         if status in ("failed", "canceled"):
-            error = (job.get("output") or {}).get("error", "raison inconnue")
-            raise RuntimeError(f"Job pyannote.ai {job_id} : statut {status} ({error})")
+            error = (job.get("output") or {}).get("error", "unknown reason")
+            raise RuntimeError(f"pyannote.ai job {job_id}: status {status} ({error})")
         time.sleep(PYANNOTE_POLL_INTERVAL_S)
-    raise TimeoutError(f"Job pyannote.ai {job_id} n'a pas terminé après {PYANNOTE_POLL_TIMEOUT_S}s")
+    raise TimeoutError(f"pyannote.ai job {job_id} did not finish within {PYANNOTE_POLL_TIMEOUT_S}s")
 
 
 def _require_cloud_env_vars() -> None:
-    """Vérifie les clés cloud avant toute dépense (appels réseau, API payante)."""
+    """Check cloud credentials before spending anything (network calls, paid API)."""
     if not os.environ.get("PYANNOTE_API_KEY"):
-        print("Erreur : variable d'environnement manquante : PYANNOTE_API_KEY", file=sys.stderr)
-        print("Configure-la dans .env (voir .env.example) avant de relancer.", file=sys.stderr)
+        print("Error: missing environment variable: PYANNOTE_API_KEY", file=sys.stderr)
+        print("Set it in .env (see .env.example) and try again.", file=sys.stderr)
         sys.exit(1)
 
 
 def transcribe_cloud(audio_path: Path, num_speakers: int | None, *, forced: bool = False) -> str:
     _require_cloud_env_vars()
     if forced:
-        print("Transcription cloud demandée (--cloud) — pyannote.ai (transcription + diarisation)...")
+        print("Cloud transcription requested (--cloud) — pyannote.ai (transcription + diarization)...")
     else:
-        print("argmax-cli / whisperkit-cli introuvable — bascule sur le fallback cloud (pyannote.ai, transcription + diarisation)...")
+        print("argmax-cli / whisperkit-cli not found — falling back to the cloud (pyannote.ai, transcription + diarization)...")
     segments = transcribe_pyannote(audio_path, num_speakers)
     if not segments:
-        print("Erreur : aucun segment de transcription obtenu (audio vide ou silencieux ?).", file=sys.stderr)
+        print("Error: no transcription segments returned (empty or silent audio?).", file=sys.stderr)
         sys.exit(1)
     return format_as_whisperkit_lines(segments, audio_path.name)
 
@@ -249,9 +249,9 @@ def transcribe_cloud(audio_path: Path, num_speakers: int | None, *, forced: bool
 def transcribe_audio(
     audio_path: Path, language: str | None, num_speakers: int | None, model: str | None, force_cloud: bool = False,
 ) -> str:
-    """Point d'entrée unique : argmax-cli / whisperkit-cli si disponible, sinon fallback cloud.
+    """Single entry point: argmax-cli / whisperkit-cli when available, otherwise the cloud fallback.
 
-    force_cloud=True force le cloud même si un transcripteur local est disponible.
+    force_cloud=True forces the cloud path even when a local transcriber is available.
     """
     if force_cloud:
         return transcribe_cloud(audio_path, num_speakers, forced=True)

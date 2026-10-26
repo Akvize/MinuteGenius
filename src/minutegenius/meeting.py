@@ -1,5 +1,5 @@
 """
-Analyse de réunion vidéo : extraction de frames clés, identification des slides et des locuteurs.
+Meeting video analysis: keyframe extraction, shared-screen description and speaker identification.
 Usage: python meeting.py <video.mp4> [--scene-threshold 0.4] [--output-dir ./meeting_out]
 """
 import argparse
@@ -40,7 +40,7 @@ def get_client() -> OpenAI:
 
 
 def get_client_image() -> OpenAI:
-    """Client dédié aux tâches vision (étape 4). Utilise AI_KEY2/AI_API2 si définis."""
+    """Client dedicated to vision tasks (steps 2 and 4). Uses AI_KEY2/AI_API2 when set."""
     global _client_image
     if _client_image is None:
         key = os.environ.get("AI_KEY2") or os.environ["AI_KEY"]
@@ -50,9 +50,9 @@ def get_client_image() -> OpenAI:
 
 
 def analyze_frame(image_path: Path) -> dict:
-    """Analyse une frame : détecte un partage d'écran et décrit son contenu.
+    """Analyze a frame: detect screen sharing and describe the shared content.
 
-    Retourne : {"shared_content": bool, "clearly_visible": str|null, "partially_visible": str|null}
+    Returns: {"shared_content": bool, "clearly_visible": str|null, "partially_visible": str|null}
     """
     model = os.environ.get("AI_MODEL_IMAGE2") or os.environ["AI_MODEL_IMAGE"]
     image_b64 = base64.b64encode(image_path.read_bytes()).decode()
@@ -72,25 +72,25 @@ def analyze_frame(image_path: Path) -> dict:
                     {
                         "type": "text",
                         "text": (
-                            "Tu analyses une frame issue d'une réunion en ligne.\n\n"
-                            "Commence par déterminer si un contenu est partagé à l'écran "
-                            "(slide PowerPoint, document, navigateur web, tableau, schéma...) ou non.\n\n"
-                            "Si **aucun contenu n'est partagé** (participants en visioconférence sans partage, "
-                            "ou fin de partage d'écran) : réponds uniquement :\n"
+                            "You are analyzing a frame from an online meeting.\n\n"
+                            "First, determine whether content is being shared on screen "
+                            "(PowerPoint slide, document, web browser, spreadsheet, diagram...) or not.\n\n"
+                            "If **no content is shared** (participants on video with no screen share, "
+                            "or the screen share has ended), reply only with:\n"
                             '{"shared_content": false, "clearly_visible": null, "partially_visible": null}\n\n'
-                            "Si un **contenu est partagé**, décris uniquement le contenu partagé lui-même. "
-                            "Ignore totalement tout ce qui appartient à l'interface de visioconférence : "
-                            "vignettes des participants, noms affichés, barre des tâches, horodatage, "
-                            "interface du logiciel de réunion. Ces éléments ne font pas partie du contenu présenté.\n\n"
-                            "- `clearly_visible` : **string de texte libre** décrivant ce qui est net, lisible, certain dans le document partagé — "
-                            "titre, date, noms, chiffres, structure, éléments clés. "
-                            "Ce champ doit être une chaîne de caractères, pas un objet JSON imbriqué. "
-                            "Conserve la langue du document tel qu'il apparaît à l'écran. "
-                            "Ne complète pas, n'infère pas ce qui n'est pas clairement visible.\n"
-                            "- `partially_visible` : ce qui est visible mais flou, tronqué ou incertain. "
-                            "Peut être null.\n\n"
-                            "Réponds UNIQUEMENT en JSON valide, sans markdown :\n"
-                            '{"shared_content": true, "clearly_visible": "<description>", "partially_visible": "<description ou null>"}'
+                            "If **content is shared**, describe only the shared content itself. "
+                            "Completely ignore everything that belongs to the video-call interface: "
+                            "participant tiles, displayed names, taskbar, timestamps, "
+                            "meeting software UI. These are not part of the presented content.\n\n"
+                            "- `clearly_visible`: **free-text string** describing what is sharp, readable and certain in the shared document — "
+                            "title, date, names, figures, structure, key elements. "
+                            "This field must be a string, not a nested JSON object. "
+                            "Keep the language of the document as it appears on screen. "
+                            "Do not complete or infer anything that is not clearly visible.\n"
+                            "- `partially_visible`: what is visible but blurry, cut off or uncertain. "
+                            "May be null.\n\n"
+                            "Reply ONLY with valid JSON, no markdown:\n"
+                            '{"shared_content": true, "clearly_visible": "<description>", "partially_visible": "<description or null>"}'
                         ),
                     },
                 ],
@@ -104,16 +104,16 @@ def analyze_frame(image_path: Path) -> dict:
         if raw.startswith("json"):
             raw = raw[4:]
     raw = raw.strip()
-    # Échappe les backslashes isolés qui cassent le JSON (ex: chemins Windows)
+    # Escape stray backslashes that break JSON (e.g. Windows paths)
     import re
     raw = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', raw)
-    # strict=False : tolère les caractères de contrôle bruts (retours à la ligne non échappés)
-    # que le modèle vision insère parfois dans les valeurs de string.
+    # strict=False: tolerate raw control characters (unescaped newlines) that the
+    # vision model sometimes inserts in string values.
     return json.loads(raw, strict=False)
 
 
 def analyze_frames(frames: list[dict], output_path: Path) -> list[dict]:
-    """Analyse chaque frame avec le modèle vision en parallèle. Sauvegarde le résultat intermédiaire."""
+    """Analyze every frame with the vision model in parallel. Saves the intermediate result."""
     results: list[dict | None] = [None] * len(frames)
     done = 0
     total = len(frames)
@@ -128,15 +128,15 @@ def analyze_frames(frames: list[dict], output_path: Path) -> list[dict]:
             idx = futures[future]
             results[idx] = future.result()
             done += 1
-            print(f"  {done}/{total} frames analysées...", end="\r", flush=True)
+            print(f"  {done}/{total} frames analyzed...", end="\r", flush=True)
     print()
     output_path.write_text(json.dumps(results, indent=2, ensure_ascii=False))
     return results
 
 
 def _wav_is_valid(wav_path: Path) -> bool:
-    """Vérifie qu'un WAV en cache est exploitable (une extraction interrompue laisse
-    un fichier tronqué, sans données audio, que ffprobe ne peut pas dater)."""
+    """Check that a cached WAV is usable (an interrupted extraction leaves a truncated
+    file with no audio data, whose duration ffprobe cannot read)."""
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(wav_path)],
@@ -151,12 +151,12 @@ def _wav_is_valid(wav_path: Path) -> bool:
 
 
 def extract_audio(video_path: Path, output_dir: Path) -> Path:
-    """Extrait la piste audio en WAV 16kHz mono pour argmax-cli, conservée comme artefact dans output_dir."""
+    """Extract the audio track as 16kHz mono WAV for argmax-cli, kept as an artifact in output_dir."""
     wav_path = output_dir / f"{video_path.stem}_audio.wav"
     if wav_path.exists():
         if _wav_is_valid(wav_path):
             return wav_path
-        print("  Audio en cache invalide (extraction précédente interrompue) — ré-extraction...", file=sys.stderr)
+        print("  Invalid cached audio (previous extraction interrupted) — re-extracting...", file=sys.stderr)
         wav_path.unlink()
     cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vn", "-ar", "16000", "-ac", "1", str(wav_path)]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -170,9 +170,9 @@ def transcribe_video(
     video_path: Path, output_path: Path, output_dir: Path, language: str = "auto", num_speakers: int | None = None,
     force_cloud: bool = False, model: str | None = None,
 ) -> str:
-    """Extrait l'audio puis lance la transcription+diarisation (argmax-cli ou fallback cloud). Sauvegarde la sortie brute."""
+    """Extract the audio, then run transcription + diarization (argmax-cli or cloud fallback). Saves the raw output."""
     wav_path = extract_audio(video_path, output_dir)
-    print(f"  Audio extrait : {wav_path}")
+    print(f"  Audio extracted: {wav_path}")
 
     raw = stt_backend.transcribe_audio(wav_path, language, num_speakers, model=model, force_cloud=force_cloud)
 
@@ -181,17 +181,17 @@ def transcribe_video(
 
 
 def _parse_speaker_line(parts: list[str]) -> tuple[float, float, str, list[str]] | None:
-    """Parse une ligne SPEAKER déjà splittée. Robuste aux noms de fichier avec espaces.
+    """Parse an already-split SPEAKER line. Robust to filenames containing spaces.
 
-    Format argmax-cli / whisperkit-cli : SPEAKER <file (peut avoir des espaces)> <ch> <start> <dur> <texte…> <NA> <speaker> <NA> <NA>
-    On cherche deux floats consécutifs depuis la position 1 (après "SPEAKER") — c'est start+dur.
+    argmax-cli / whisperkit-cli format: SPEAKER <file (may contain spaces)> <ch> <start> <dur> <text…> <NA> <speaker> <NA> <NA>
+    We look for two consecutive floats from position 1 (after "SPEAKER") — that's start+dur.
     """
-    # parts[-3] = speaker, parts[-1] et parts[-2] = NA, parts[-4] = NA
+    # parts[-3] = speaker, parts[-1] and parts[-2] = NA, parts[-4] = NA
     if len(parts) < 9:
         return None
     speaker = parts[-3]
-    # Trouver start et duration : deux floats consécutifs où la duration a un point décimal.
-    # Exiger un '.' dans la duration évite de matcher des entiers du nom de fichier ou du channel.
+    # Find start and duration: two consecutive floats, both with a decimal point.
+    # Requiring a '.' avoids matching integers from the filename or the channel.
     start_idx = None
     for i in range(1, len(parts) - 4):
         try:
@@ -212,7 +212,7 @@ def _parse_speaker_line(parts: list[str]) -> tuple[float, float, str, list[str]]
 
 
 def parse_transcript(transcript_path: Path) -> list[dict]:
-    """Parse le transcript brut (argmax-cli / whisperkit-cli) en liste de segments {speaker, start, end, text}."""
+    """Parse the raw transcript (argmax-cli / whisperkit-cli) into a list of {speaker, start, end, text} segments."""
     segments = []
     for line in transcript_path.read_text(encoding="utf-8").splitlines():
         if not line.startswith("SPEAKER"):
@@ -228,7 +228,7 @@ def parse_transcript(transcript_path: Path) -> list[dict]:
 
 
 def parse_segments(transcript_path: Path) -> dict[str, list[tuple[float, float]]]:
-    """Retourne {speaker: [(start, duration), ...]} depuis la sortie brute argmax-cli / whisperkit-cli."""
+    """Return {speaker: [(start, duration), ...]} from the raw argmax-cli / whisperkit-cli output."""
     segments: dict[str, list[tuple[float, float]]] = {}
     for line in transcript_path.read_text(encoding="utf-8").splitlines():
         if not line.startswith("SPEAKER"):
@@ -242,11 +242,11 @@ def parse_segments(transcript_path: Path) -> dict[str, list[tuple[float, float]]
 
 
 def prefetch_speaker_frames(video_path: Path, all_segments: dict[str, list[tuple[float, float]]], frames_dir: Path, max_times: int = 3, frames_per_time: int = 3) -> dict[str, list[list[Path]]]:
-    """Extrait en parallèle les frames candidates pour l'identification des locuteurs.
+    """Extract candidate frames for speaker identification, in parallel.
 
-    Pour chaque locuteur, prend les max_times segments les plus longs et extrait
-    frames_per_time frames consécutives à 1 seconde d'intervalle depuis le milieu de chacun.
-    Retourne {speaker: [[time1_f1, time1_f2, time1_f3], [time2_f1, ...], ...]}.
+    For each speaker, takes the max_times longest segments and extracts
+    frames_per_time consecutive frames, 1 second apart, from the middle of each.
+    Returns {speaker: [[time1_f1, time1_f2, time1_f3], [time2_f1, ...], ...]}.
     """
     duration = _video_duration(video_path)
     max_ts = max(duration - 0.1, 0.0)
@@ -261,7 +261,7 @@ def prefetch_speaker_frames(video_path: Path, all_segments: dict[str, list[tuple
                 frame_path = frames_dir / f"speaker_{speaker}_time{t_idx+1}_frame{f_idx+1}_{ts:.2f}s.jpg"
                 tasks.append((speaker, t_idx, f_idx, ts, frame_path))
 
-    print(f"  Extraction de {len(tasks)} frames en parallèle...", flush=True)
+    print(f"  Extracting {len(tasks)} frames in parallel...", flush=True)
 
     def _extract(task):
         speaker, t_idx, f_idx, ts, frame_path = task
@@ -279,16 +279,16 @@ def prefetch_speaker_frames(video_path: Path, all_segments: dict[str, list[tuple
                 results[speaker] = [[None] * frames_per_time for _ in range(max_times)]
             results[speaker][t_idx][f_idx] = frame_path
             done += 1
-            print(f"  {done}/{len(tasks)} frames extraites...", end="\r", flush=True)
+            print(f"  {done}/{len(tasks)} frames extracted...", end="\r", flush=True)
     print()
     return results
 
 
 def identify_speaker(frames_by_time: list[list[Path]], known: dict[str, str]) -> tuple[str | None, list[str]]:
-    """Identifie un locuteur en essayant chaque groupe de frames consécutives jusqu'à trouver un résultat.
+    """Identify a speaker by trying each group of consecutive frames until one gives a result.
 
-    Renvoie aussi l'union des participants visibles sur toutes les frames essayées, pour
-    enrichir le référentiel de noms proposables même quand aucun locuteur n'a pu être isolé.
+    Also returns the union of participants visible on all frames tried, to enrich the
+    list of names offered for validation even when no speaker could be singled out.
     """
     roster: list[str] = []
     for t_idx, frames in enumerate(frames_by_time):
@@ -302,11 +302,11 @@ def identify_speaker(frames_by_time: list[list[Path]], known: dict[str, str]) ->
 
 
 def _identify_speaker_once(frames: list[Path], known: dict[str, str], attempt: int = 1) -> tuple[str | None, list[str]]:
-    """Identifie un locuteur en envoyant ses frames en un seul appel vision.
+    """Identify a speaker by sending their frames in a single vision call.
 
-    Renvoie (nom_identifié_ou_None, participants_visibles) : la seconde valeur liste
-    tous les noms vus sur les vignettes (phase 1.1), même quand aucun locuteur n'a pu
-    être isolé, pour que ces noms restent proposables lors de la validation manuelle.
+    Returns (identified_name_or_None, visible_participants): the second value lists
+    every name seen on the participant tiles (phase 1.1), even when no speaker could
+    be singled out, so these names can still be offered during manual validation.
     """
     model = os.environ.get("AI_MODEL_IMAGE2") or os.environ["AI_MODEL_IMAGE"]
 
@@ -315,11 +315,11 @@ def _identify_speaker_once(frames: list[Path], known: dict[str, str], attempt: i
         return None, []
 
     if known:
-        known_str = "Locuteurs déjà identifiés dans cette réunion :\n" + "\n".join(
+        known_str = "Speakers already identified in this meeting:\n" + "\n".join(
             f"- {name}" for name in known.values()
         )
     else:
-        known_str = "Aucun locuteur encore identifié."
+        known_str = "No speaker identified yet."
 
     content = []
     for i, frame_path in enumerate(valid_frames):
@@ -328,32 +328,32 @@ def _identify_speaker_once(frames: list[Path], known: dict[str, str], attempt: i
         content.append({"type": "text", "text": f"Image {i+1}/{len(valid_frames)}"})
 
     content.append({"type": "text", "text": (
-        f"Tu analyses {len(valid_frames)} frames consécutives d'une réunion en ligne, "
-        "toutes correspondant au même locuteur inconnu. "
-        "Suis ce raisonnement en 3 phases :\n\n"
+        f"You are analyzing {len(valid_frames)} consecutive frames from an online meeting, "
+        "all corresponding to the same unknown speaker. "
+        "Follow this 3-phase reasoning:\n\n"
         f"{known_str}\n\n"
-        "**Phase 1 — Identification et élimination des connus**\n"
-        "1.1. Liste tous les participants visibles sur les vignettes (noms affichés dans l'interface).\n"
-        "1.2. Élimine ceux qui sont déjà dans la liste des locuteurs identifiés ci-dessus.\n\n"
-        "**Phase 2 — Analyse visuelle, sans tenir compte de ce que montre l'interface**\n"
-        "À cette phase, ignore totalement les mises en valeur de l'interface (bordures, fonds colorés, noms surlignés). "
-        "Dans cette réunion, des participants peuvent partager un micro, donc l'interface peut mettre en valeur "
-        "la mauvaise personne.\n"
-        "2.1. Parmi les restants, élimine ceux dont les mouvements sont incompatibles avec une prise de parole "
-        "(bouche fermée, posture statique, main sur le menton ou le visage).\n"
-        "2.2. S'il reste quelqu'un avec des mouvements clairement compatibles avec la parole "
-        "(bouche nettement ouverte sur au moins 2 frames, articulation visible, gestes actifs) → "
-        "c'est le locuteur. Indique 'high' si le signal est net et sans ambiguïté, 'medium' si c'est probable "
-        "mais qu'une autre personne pourrait aussi convenir.\n\n"
-        "**Phase 3 — Prise en compte de l'interface (seulement si phase 2 n'a pas conclu)**\n"
-        "3.1. Cherche si quelqu'un parmi les restants est explicitement mis en valeur par l'interface "
-        "(bordure colorée, fond coloré derrière le nom — pas un simple avatar sans indicateur visuel). "
-        "Si cette personne n'a pas de vidéo active (avatar avec initiales) → c'est le locuteur (confidence: high).\n\n"
-        "Dans tous les autres cas, renvoie null.\n\n"
-        "Réponds UNIQUEMENT en JSON valide, sans markdown :\n"
-        '{"visible_participants": ["<tous les noms listés en phase 1.1>"], '
-        '"name": "<prénom et/ou nom identifié ou null>", "confidence": "high|medium", '
-        '"reasoning": "<résumé de ton raisonnement phase par phase>"}'
+        "**Phase 1 — Identify participants and rule out known speakers**\n"
+        "1.1. List every participant visible on the tiles (names displayed in the interface).\n"
+        "1.2. Rule out those already in the list of identified speakers above.\n\n"
+        "**Phase 2 — Visual analysis, ignoring what the interface shows**\n"
+        "In this phase, completely ignore interface highlighting (borders, colored backgrounds, highlighted names). "
+        "In this meeting, participants may share a microphone, so the interface may highlight "
+        "the wrong person.\n"
+        "2.1. Among the remaining participants, rule out those whose movements are incompatible with speaking "
+        "(closed mouth, static posture, hand on chin or face).\n"
+        "2.2. If someone remains whose movements are clearly consistent with speaking "
+        "(mouth clearly open on at least 2 frames, visible articulation, active gestures) → "
+        "that is the speaker. Use 'high' if the signal is clear and unambiguous, 'medium' if it is likely "
+        "but another person could also fit.\n\n"
+        "**Phase 3 — Take the interface into account (only if phase 2 was inconclusive)**\n"
+        "3.1. Check whether someone among the remaining participants is explicitly highlighted by the interface "
+        "(colored border, colored background behind the name — not just an avatar with no visual indicator). "
+        "If that person has no active video (avatar with initials) → that is the speaker (confidence: high).\n\n"
+        "In all other cases, return null.\n\n"
+        "Reply ONLY with valid JSON, no markdown:\n"
+        '{"visible_participants": ["<all names listed in phase 1.1>"], '
+        '"name": "<identified first and/or last name, or null>", "confidence": "high|medium", '
+        '"reasoning": "<summary of your phase-by-phase reasoning>"}'
     )})
 
     API_TIMEOUT = 120
@@ -369,10 +369,10 @@ def _identify_speaker_once(frames: list[Path], known: dict[str, str], attempt: i
             break
         except Exception as e:
             if retry < MAX_RETRIES - 1:
-                print(f"    timeout/erreur ({retry+1}/{MAX_RETRIES}), retry...", flush=True)
+                print(f"    timeout/error ({retry+1}/{MAX_RETRIES}), retrying...", flush=True)
                 time.sleep(2)
             else:
-                print(f"    échec après {MAX_RETRIES} tentatives : {e}")
+                print(f"    failed after {MAX_RETRIES} attempts: {e}")
                 return None, []
 
     raw = response.choices[0].message.content.strip()
@@ -388,15 +388,15 @@ def _identify_speaker_once(frames: list[Path], known: dict[str, str], attempt: i
         visible = [v for v in (result.get("visible_participants") or []) if isinstance(v, str) and v.strip()]
         if name and name != "null":
             if name in known.values():
-                print(f"→ {name} déjà identifié, classé inconnu — {reasoning}")
+                print(f"→ {name} already identified, marked as unknown — {reasoning}")
                 return None, visible
             print(f"→ {name} ({confidence}) — {reasoning}")
             return name, visible
         else:
-            print(f"→ indéterminé — {reasoning}")
+            print(f"→ undetermined — {reasoning}")
             return None, visible
     except (json.JSONDecodeError, AttributeError):
-        print("→ erreur parsing")
+        print("→ parsing error")
 
     return None, []
 
@@ -414,22 +414,22 @@ def validate_speakers_interactive(
     output_path: Path,
     known_roster: list[str] | None = None,
 ) -> dict[str, str]:
-    """Validation interactive du mapping locuteur → nom, du plus au moins bavard."""
-    # Trier par temps de parole décroissant
+    """Interactive validation of the speaker → name mapping, from most to least talkative."""
+    # Sort by decreasing speaking time
     ordered = sorted(
         speakers_map.items(),
         key=lambda x: sum(d for _, d in all_segments.get(x[0], [])),
         reverse=True,
     )
 
-    # Liste de tous les noms connus (pour proposer un menu), enrichie des participants
-    # vus sur les vignettes mais jamais retenus comme locuteur principal d'un segment.
+    # All known names (to offer a menu), plus participants seen on the tiles
+    # but never picked as the main speaker of a segment.
     all_names = [name for _, name in ordered]
     for name in known_roster or []:
         if name not in all_names:
             all_names.append(name)
 
-    # Restaurer le terminal en mode cooked (ffmpeg/argmax-cli peuvent le laisser en raw)
+    # Restore the terminal to cooked mode (ffmpeg/argmax-cli may leave it in raw mode)
     try:
         subprocess.run(["stty", "sane"], check=False)
     except Exception:
@@ -437,10 +437,11 @@ def validate_speakers_interactive(
 
     print()
     print("=" * 60)
-    print("Validation des locuteurs identifiés")
-    print("  y       → confirmer l'identification proposée")
-    print("  <n>     → choisir le n° dans la liste")
-    print("  q       → quitter et conserver l'état actuel")
+    print("Validate identified speakers")
+    print("  y       → confirm the proposed identification")
+    print("  <n>     → pick number n from the list")
+    print("  <name>  → type a name not in the list")
+    print("  q       → quit and keep the current state")
     print("=" * 60)
 
     updated = dict(speakers_map)
@@ -449,7 +450,7 @@ def validate_speakers_interactive(
         segs = all_segments.get(spk_id, [])
         total_sec = sum(d for _, d in segs)
 
-        # Timestamp de vérification : milieu du segment le plus long
+        # Timestamp to check: middle of the longest segment
         best_seg = max(segs, key=lambda s: s[1]) if segs else None
         if best_seg:
             check_ts = best_seg[0] + best_seg[1] / 2
@@ -458,57 +459,57 @@ def validate_speakers_interactive(
             ts_str = "?"
 
         print()
-        print(f"Locuteur {spk_id}  ({total_sec:.0f}s de parole)  →  vérifier vers {ts_str} dans la vidéo")
-        print(f"  Identification proposée : {current_name}")
-        print("  Tous les participants :")
+        print(f"Speaker {spk_id}  ({total_sec:.0f}s of speech)  →  check around {ts_str} in the video")
+        print(f"  Proposed identification: {current_name}")
+        print("  All participants:")
         for i, name in enumerate(all_names, 1):
             marker = "◀" if name == current_name else " "
             print(f"    {i:2d}. {name} {marker}")
 
         while True:
             try:
-                raw_answer = input("  Votre choix [y / numéro / nom / q] : ").strip("\r\n \t")
+                raw_answer = input("  Your choice [y / number / name / q]: ").strip("\r\n \t")
             except (EOFError, KeyboardInterrupt):
-                print("\nInterrompu.")
+                print("\nInterrupted.")
                 output_path.write_text(json.dumps(updated, indent=2, ensure_ascii=False))
                 return updated
 
             answer = raw_answer.lower()
 
             if answer == "q":
-                print("  → Validation interrompue, état courant sauvegardé.")
+                print("  → Validation stopped, current state saved.")
                 output_path.write_text(json.dumps(updated, indent=2, ensure_ascii=False))
                 return updated
             elif answer in ("y", ""):
-                break  # on garde le nom proposé
+                break  # keep the proposed name
             elif answer.isdigit():
                 idx = int(answer) - 1
                 if 0 <= idx < len(all_names):
                     updated[spk_id] = all_names[idx]
-                    print(f"  → Corrigé : {all_names[idx]}")
+                    print(f"  → Corrected: {all_names[idx]}")
                     break
                 else:
-                    print(f"  Numéro invalide (1–{len(all_names)}), recommencez.")
+                    print(f"  Invalid number (1–{len(all_names)}), try again.")
             else:
-                # Saisie libre : le participant n'était pas proposé dans la liste.
+                # Free text: the participant was not offered in the list.
                 updated[spk_id] = raw_answer
                 if raw_answer not in all_names:
                     all_names.append(raw_answer)
-                print(f"  → Corrigé (saisie libre) : {raw_answer}")
+                print(f"  → Corrected (free text): {raw_answer}")
                 break
 
     output_path.write_text(json.dumps(updated, indent=2, ensure_ascii=False))
     print()
-    print("Validation terminée.")
+    print("Validation complete.")
     return updated
 
 
 def generate_timeline(analyzed_frames: list[dict], transcript_path: Path, speakers_map: dict[str, str], output_path: Path) -> None:
-    """Génère une timeline chronologique brute : speech et écrans entrelacés par timestamp."""
+    """Generate a raw chronological timeline: speech and screen content interleaved by timestamp."""
     segments = parse_transcript(transcript_path)
     frames_with_content = [f for f in analyzed_frames if f.get("shared_content")]
 
-    # Construire une liste d'événements triés par timestamp
+    # Build a list of events sorted by timestamp
     events: list[dict] = []
     for seg in segments:
         name = speakers_map.get(seg["speaker"], seg["speaker"])
@@ -520,11 +521,11 @@ def generate_timeline(analyzed_frames: list[dict], transcript_path: Path, speake
 
     events.sort(key=lambda e: e["ts"])
 
-    lines = ["# Timeline brute de la réunion\n"]
+    lines = ["# Raw meeting timeline\n"]
     for ev in events:
         t = _fmt_time(ev["ts"])
         if ev["type"] == "speech":
-            lines.append(f"[{t}] **{ev['speaker']}** : {ev['text']}")
+            lines.append(f"[{t}] **{ev['speaker']}**: {ev['text']}")
         else:
             lines.append(f"[{t}] 🖥 {ev['text']}")
         lines.append("")
@@ -534,15 +535,15 @@ def generate_timeline(analyzed_frames: list[dict], transcript_path: Path, speake
 
 
 def identify_speakers(video_path: Path, transcript_path: Path, output_path: Path, frames_dir: Path) -> tuple[dict[str, str], list[str]]:
-    """Identifie tous les locuteurs et sauvegarde le mapping {speaker_id: name}.
+    """Identify all speakers and save the {speaker_id: name} mapping.
 
-    Renvoie aussi le référentiel de tous les participants aperçus sur les vignettes,
-    y compris ceux jamais retenus comme locuteur principal d'un segment.
+    Also returns the roster of every participant seen on the tiles,
+    including those never picked as the main speaker of a segment.
     """
     all_segments = parse_segments(transcript_path)
     ordered = sorted(all_segments.items(), key=lambda x: sum(d for _, d in x[1]), reverse=True)
 
-    # Pré-extraction parallèle de toutes les frames candidates
+    # Pre-extract all candidate frames in parallel
     prefetched = prefetch_speaker_frames(video_path, dict(ordered), frames_dir)
 
     known: dict[str, str] = {}
@@ -557,14 +558,14 @@ def identify_speakers(video_path: Path, transcript_path: Path, output_path: Path
             if v not in roster:
                 roster.append(v)
         if not name:
-            print("→ inconnu")
+            print("→ unknown")
 
     output_path.write_text(json.dumps(known, indent=2, ensure_ascii=False))
     return known, roster
 
 
 def extract_frame(video_path: Path, timestamp: float, output_path: Path) -> None:
-    """Extrait une frame à un timestamp donné."""
+    """Extract a single frame at the given timestamp."""
     cmd = [
         "ffmpeg", "-ss", str(timestamp),
         "-i", str(video_path),
@@ -575,7 +576,7 @@ def extract_frame(video_path: Path, timestamp: float, output_path: Path) -> None
 
 
 def _video_duration(video_path: Path) -> float:
-    """Retourne la durée de la vidéo en secondes via ffprobe."""
+    """Return the video duration in seconds, via ffprobe."""
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
@@ -585,7 +586,7 @@ def _video_duration(video_path: Path) -> float:
 
 
 def _dhash(image_path: Path, size: int = 8) -> int:
-    """Calcule le dhash perceptuel d'une image (size*size bits)."""
+    """Compute the perceptual dhash of an image (size*size bits)."""
     img = Image.open(image_path).convert("L").resize((size + 1, size), Image.LANCZOS)
     pixels = list(img.getdata()) if not hasattr(img, "get_flattened_data") else list(img.get_flattened_data())
     bits = 0
@@ -602,14 +603,14 @@ def _hamming(a: int, b: int) -> int:
 
 
 def extract_interval_frames(video_path: Path, output_dir: Path, interval: int = 5, hamming_threshold: int = 12) -> list[dict]:
-    """Extrait une frame toutes les `interval` secondes, supprime les quasi-doublons par dhash."""
+    """Extract one frame every `interval` seconds and drop near-duplicates using dhash."""
     output_dir.mkdir(parents=True, exist_ok=True)
     duration = _video_duration(video_path)
     timestamps = [i * interval for i in range(int(duration // interval) + 1) if i * interval <= duration]
     total = len(timestamps)
-    print(f"  {total} frames à extraire ({interval}s d'intervalle, durée {duration:.0f}s)...")
+    print(f"  {total} frames to extract (every {interval}s, duration {duration:.0f}s)...")
 
-    # Extraction parallèle
+    # Parallel extraction
     def _extract(args):
         idx, ts = args
         path = output_dir / f"frame_{idx:04d}_{ts:.2f}s.jpg"
@@ -625,46 +626,46 @@ def extract_interval_frames(video_path: Path, output_dir: Path, interval: int = 
             idx, ts, path = future.result()
             raw_frames[idx] = (idx, ts, path)
             done += 1
-            print(f"  {done}/{total} extraites...", end="\r", flush=True)
+            print(f"  {done}/{total} extracted...", end="\r", flush=True)
     print()
 
-    # Déduplication dhash : sliding window — on ne supprime une frame que quand la suivante est connue
-    print("  Déduplication par dhash...")
+    # dhash deduplication: sliding window — a frame is only dropped once the next one is known
+    print("  Deduplicating with dhash...")
     kept: list[dict] = []
     removed = 0
 
-    # candidate = frame "en attente" de décision, avec son hash
+    # candidate = frame "pending" a decision, with its hash
     candidate: tuple[int, float, Path, int] | None = None  # (idx, ts, path, hash)
 
     for idx, ts, path in raw_frames:
         h = _dhash(path)
         if candidate is None:
-            # Première frame : toujours gardée
+            # First frame: always kept
             candidate = (idx, ts, path, h)
         elif _hamming(h, candidate[3]) <= hamming_threshold:
-            # Pareille que le candidat : on supprime le candidat, la frame courante devient le nouveau candidat
+            # Same as the candidate: drop the candidate, the current frame becomes the new candidate
             candidate[2].unlink()
             removed += 1
             candidate = (idx, ts, path, h)
         else:
-            # Différente : le candidat est une key frame, on le sauve
+            # Different: the candidate is a keyframe, keep it
             _, c_ts, c_path, _ = candidate
             kept.append({"index": len(kept), "timestamp": c_ts, "path": str(c_path)})
             candidate = (idx, ts, path, h)
 
-    # Dernière frame en attente : toujours sauvegardée
+    # Last pending frame: always kept
     if candidate is not None:
         _, c_ts, c_path, _ = candidate
         kept.append({"index": len(kept), "timestamp": c_ts, "path": str(c_path)})
 
-    print(f"  {removed} doublons supprimés → {len(kept)} frames conservées")
+    print(f"  {removed} duplicates removed → {len(kept)} frames kept")
     return kept
 
 
 def _parse_report_blocks(report_path: Path) -> list[dict]:
-    """Découpe le rapport en blocs {header, presented, transcription, raw_lines}.
+    """Split the report into {header, presented, transcription, raw_lines} blocks.
 
-    Chaque bloc correspond à un ## du rapport.
+    Each block corresponds to a ## heading in the report.
     """
     lines = report_path.read_text(encoding="utf-8").splitlines()
     blocks = []
@@ -676,10 +677,10 @@ def _parse_report_blocks(report_path: Path) -> list[dict]:
                 blocks.append(current)
             current = {"header": line, "presented": None, "transcription": [], "section": None}
         elif current is None:
-            # Avant le premier bloc (titre H1)
+            # Before the first block (H1 title)
             blocks.append({"header": line, "presented": None, "transcription": [], "section": "preamble"})
             current = None
-        elif line == "### Ce qui est présenté":
+        elif line == "### What is presented":
             current["section"] = "presented"
         elif line == "### Transcription":
             current["section"] = "transcription"
@@ -694,11 +695,11 @@ def _parse_report_blocks(report_path: Path) -> list[dict]:
 
 
 def _correct_block(transcription_lines: list[str], presented: str | None, lexicon: str) -> str:
-    """Envoie un bloc de transcription au LLM pour correction."""
+    """Send a transcription block to the LLM for correction."""
     model = os.environ["AI_MODEL_WRITER"]
 
     context_slide = (
-        f"Contenu affiché à l'écran pendant cette séquence :\n{presented.strip()}\n\n"
+        f"Content shown on screen during this sequence:\n{presented.strip()}\n\n"
         if presented else ""
     )
     raw_text = "\n".join(transcription_lines).strip()
@@ -706,23 +707,24 @@ def _correct_block(transcription_lines: list[str], presented: str | None, lexico
         return raw_text
 
     prompt = (
-        "Tu es chargé de transformer une retranscription brute de réunion en contenu structuré "
-        "pour une base de connaissance (RAG). L'objectif est de produire un document dense en information, "
-        "exploitable par recherche sémantique.\n\n"
-        "LEXIQUE DE RÉFÉRENCE — utilise-le pour corriger les erreurs de reconnaissance phonétique :\n"
+        "Your task is to turn a raw meeting transcript into structured content "
+        "for a knowledge base (RAG). The goal is an information-dense document "
+        "suited to semantic search.\n\n"
+        "REFERENCE LEXICON — use it to fix speech-recognition errors:\n"
         f"{lexicon}\n\n"
         f"{context_slide}"
-        "TRANSCRIPTION BRUTE :\n"
+        "RAW TRANSCRIPT:\n"
         f"{raw_text}\n\n"
-        "INSTRUCTIONS :\n"
-        "- Produis un compte-rendu structuré en markdown de ce qui a été dit.\n"
-        "- Si plusieurs sujets distincts sont abordés dans le bloc, crée une sous-section (###) par sujet.\n"
-        "- Reste verbeux : conserve les détails, chiffres, exemples, nuances — ne perds aucune information.\n"
-        "- Attribue les propos à leurs auteurs de façon naturelle "
-        "(ex: 'Alice Dupont explique que...', 'Selon Bob Martin,...').\n"
-        "- Corrige les mishearings avec le lexique (ex: 'Kubernetiss' → 'Kubernetes', 'Jean Dupond' → 'Jean Dupont').\n"
-        "- Ne mets pas de titre de niveau ## ou # — commence directement par le contenu.\n"
-        "- Réponds uniquement avec le contenu markdown, sans commentaire."
+        "INSTRUCTIONS:\n"
+        "- Write a structured markdown summary of what was said.\n"
+        "- Write in the language mainly spoken in the transcript.\n"
+        "- If several distinct topics are covered in the block, create one subsection (###) per topic.\n"
+        "- Stay detailed: keep details, figures, examples and nuances — do not lose any information.\n"
+        "- Attribute statements to their speakers naturally "
+        "(e.g. 'Alice Dupont explains that...', 'According to Bob Martin,...').\n"
+        "- Fix mishearings using the lexicon (e.g. 'Kubernetiss' → 'Kubernetes', 'Jean Dupond' → 'Jean Dupont').\n"
+        "- Do not use ## or # headings — start directly with the content.\n"
+        "- Reply only with the markdown content, no commentary."
     )
 
     API_TIMEOUT = 120
@@ -740,39 +742,40 @@ def _correct_block(transcription_lines: list[str], presented: str | None, lexico
             if retry < MAX_RETRIES - 1:
                 time.sleep(2)
             else:
-                print(f"    échec après {MAX_RETRIES} tentatives : {e}")
-                return raw_text  # Conserve l'original en cas d'échec
+                print(f"    failed after {MAX_RETRIES} attempts: {e}")
+                return raw_text  # Keep the original on failure
 
 
 def generate_minutes(timeline_path: Path, lexicon_path: Path, output_path: Path, max_blocks: int | None = None) -> None:
-    """Génère un compte-rendu structuré en envoyant la timeline complète au LLM en un seul appel."""
+    """Generate structured minutes by sending the full timeline to the LLM in a single call."""
     model = os.environ["AI_MODEL_WRITER"]
     lexicon = lexicon_path.read_text(encoding="utf-8")
     timeline = timeline_path.read_text(encoding="utf-8")
 
     prompt = (
-        "Tu es chargé de rédiger le compte-rendu d'une réunion à partir de sa timeline brute.\n\n"
-        "La timeline contient deux types d'événements horodatés :\n"
-        "- `[HH:MM] **Prénom Nom** : texte` — prise de parole (transcription brute, peut contenir des erreurs phonétiques)\n"
-        "- `[HH:MM] 🖥 description` — capture d'écran analysée (ce qui était affiché à ce moment)\n\n"
-        "LEXIQUE DE RÉFÉRENCE — utilise-le pour corriger les erreurs de reconnaissance phonétique :\n"
+        "Your task is to write the minutes of a meeting from its raw timeline.\n\n"
+        "The timeline contains two kinds of timestamped events:\n"
+        "- `[HH:MM] **First Last**: text` — speech (raw transcript, may contain speech-recognition errors)\n"
+        "- `[HH:MM] 🖥 description` — analyzed screenshot (what was on screen at that moment)\n\n"
+        "REFERENCE LEXICON — use it to fix speech-recognition errors:\n"
         f"{lexicon}\n\n"
-        "TIMELINE BRUTE :\n"
+        "RAW TIMELINE:\n"
         f"{timeline}\n\n"
-        "INSTRUCTIONS :\n"
-        "- Rédige un compte-rendu structuré en markdown.\n"
-        "- Organise par grandes thématiques abordées, pas par interlocuteur ni par ordre chronologique strict.\n"
-        "- Pour chaque thématique, intègre naturellement ce qui était affiché à l'écran pour enrichir le contexte.\n"
-        "- Attribue les propos à leurs auteurs de façon naturelle (ex: 'Alice Dupont explique que...').\n"
-        "- Conserve les détails, chiffres, exemples et nuances — ne perds aucune information importante.\n"
-        "- Corrige les mishearings avec le lexique.\n"
-        "- Commence par un résumé exécutif de 3-5 lignes.\n"
-        "- Réponds uniquement avec le contenu markdown, sans commentaire."
+        "INSTRUCTIONS:\n"
+        "- Write structured minutes in markdown.\n"
+        "- Write in the language mainly spoken in the meeting.\n"
+        "- Organize by main topics discussed, not by speaker or strict chronological order.\n"
+        "- For each topic, naturally weave in what was shown on screen to enrich the context.\n"
+        "- Attribute statements to their speakers naturally (e.g. 'Alice Dupont explains that...').\n"
+        "- Keep details, figures, examples and nuances — do not lose any important information.\n"
+        "- Fix mishearings using the lexicon.\n"
+        "- Start with a 3-5 line executive summary.\n"
+        "- Reply only with the markdown content, no commentary."
     )
 
     API_TIMEOUT = 600
     MAX_RETRIES = 3
-    print(f"  Envoi de la timeline au LLM ({len(timeline)} caractères)...", flush=True)
+    print(f"  Sending the timeline to the LLM ({len(timeline)} characters)...", flush=True)
     for retry in range(MAX_RETRIES):
         try:
             response = get_client().chat.completions.create(
@@ -787,19 +790,19 @@ def generate_minutes(timeline_path: Path, lexicon_path: Path, output_path: Path,
             return
         except Exception as e:
             if retry < MAX_RETRIES - 1:
-                print(f"    erreur ({retry+1}/{MAX_RETRIES}), retry... {e}")
+                print(f"    error ({retry+1}/{MAX_RETRIES}), retrying... {e}")
                 time.sleep(5)
             else:
-                print(f"    échec après {MAX_RETRIES} tentatives : {e}")
+                print(f"    failed after {MAX_RETRIES} attempts: {e}")
                 raise
 
 
 def video_temp_dir(video_path: Path) -> Path:
-    """Dossier temporaire (frames, audio) dédié à cette vidéo, sous le tmp du système.
+    """Temporary directory (frames) dedicated to this video, under the system tmp.
 
-    Nommé d'après le chemin absolu de la vidéo : stable entre deux relances de la même
-    vidéo (permet la reprise après un crash), mais isolé par vidéo pour supporter
-    plusieurs analyses en parallèle sans collision, même à nom de fichier identique.
+    Named after the video's absolute path: stable across reruns of the same video
+    (allows resuming after a crash), but isolated per video so several analyses can
+    run in parallel without collisions, even with identical filenames.
     """
     digest = hashlib.sha1(str(video_path.resolve()).encode()).hexdigest()[:10]
     temp_dir = Path(tempfile.gettempdir()) / f"meeting_{video_path.stem}_{digest}"
@@ -808,74 +811,73 @@ def video_temp_dir(video_path: Path) -> Path:
 
 
 def cleanup_temp_files(temp_dir: Path) -> None:
-    """Supprime le dossier temporaire (frames, audio) une fois le pipeline terminé.
+    """Delete the temporary directory (frames) once the pipeline has finished.
 
-    Casse la reprise (--from-step) en cas de future relance, mais évite d'accumuler
-    des Go de frames/audio pour chaque vidéo analysée.
+    Prevents resuming (--from-step) on a later rerun, but avoids piling up
+    gigabytes of frames for every analyzed video.
     """
     shutil.rmtree(temp_dir, ignore_errors=True)
-    print(f"  Fichiers temporaires nettoyés ({temp_dir}).")
+    print(f"  Temporary files cleaned up ({temp_dir}).")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Analyse de réunion vidéo")
-    parser.add_argument("video", type=Path, help="Fichier vidéo d'entrée")
+    parser = argparse.ArgumentParser(description="Generate meeting minutes from a meeting video")
+    parser.add_argument("video", type=Path, help="Input video file")
     parser.add_argument("--scene-threshold", type=float, default=DEFAULT_SCENE_THRESHOLD,
-                        help=f"Seuil de détection de scène ffmpeg (défaut: {DEFAULT_SCENE_THRESHOLD})")
+                        help=f"ffmpeg scene-detection threshold (default: {DEFAULT_SCENE_THRESHOLD})")
     parser.add_argument("--output-dir", type=Path, default=None,
-                        help="Répertoire de sortie (défaut: <video_stem>_meeting/)")
+                        help="Output directory (default: <video_stem>_meeting/)")
     parser.add_argument("--language", default="auto",
-                        help="Langue de transcription (fr, en…) ou 'auto' pour la détection automatique (défaut: auto)")
+                        help="Transcription language (fr, en…) or 'auto' for automatic detection (default: auto)")
     parser.add_argument("--model", default=None,
-                        help="Modèle Whisper, ex: large-v3-v20240930_626MB (auto si non spécifié)")
-    parser.add_argument("--speakers", type=int, default=None, help="Nombre de locuteurs (auto si non spécifié)")
+                        help="Whisper model, e.g. large-v3-v20240930_626MB (auto if omitted)")
+    parser.add_argument("--speakers", type=int, default=None, help="Number of speakers (auto-detected if omitted)")
     parser.add_argument("--cloud", action="store_true",
-                        help="Force la transcription cloud (pyannote.ai) même si argmax-cli/whisperkit-cli est disponible")
-    parser.add_argument("--lexicon", type=str, default=None, help="Chemin vers le lexique markdown pour la correction (étape 6)")
-    parser.add_argument("--max-clean-blocks", type=int, default=None, help="Nombre maximum de blocs à corriger (étape 6, pour test)")
+                        help="Force cloud transcription (pyannote.ai) even if argmax-cli/whisperkit-cli is available")
+    parser.add_argument("--lexicon", type=str, default=None, help="Path to the markdown lexicon used for corrections (step 6)")
+    parser.add_argument("--max-clean-blocks", type=int, default=None, help="Maximum number of blocks to correct (step 6, for testing)")
     parser.add_argument("--from-step", type=int, default=None, metavar="N",
-                        help="Relancer à partir de l'étape N (supprime les sorties des étapes ≥ N)")
+                        help="Rerun from step N onward (deletes the outputs of steps ≥ N)")
     parser.add_argument("--only-step", type=int, default=None, metavar="N",
-                        help="Relancer uniquement l'étape N (supprime uniquement sa sortie)")
+                        help="Rerun only step N (deletes only its output)")
     parser.add_argument("--revalidate", action="store_true",
-                        help="Relance uniquement la validation interactive des locuteurs à partir de "
-                             "l'identification déjà en cache (étape 4), sans réémettre d'appels cloud "
-                             "(pyannote.ai / OpenRouter)")
+                        help="Rerun only the interactive speaker validation, from the identification "
+                             "already cached (step 4), without making any new API calls")
     parser.add_argument("--clean", action="store_true",
-                        help="Supprime les fichiers intermédiaires (frames extraites, cache) à la fin du "
-                             "pipeline. Par défaut ils sont conservés pour permettre une relance rapide "
+                        help="Delete intermediate files (extracted frames, cache) at the end of the "
+                             "pipeline. By default they are kept to allow fast reruns "
                              "(--from-step / --only-step).")
     parser.add_argument("--extract-audio-only", action="store_true",
-                        help="Extrait uniquement la piste audio (WAV 16kHz mono) et quitte, "
-                             "sans lancer le reste du pipeline (frames, transcription, etc.).")
+                        help="Extract only the audio track (16kHz mono WAV) and exit, "
+                             "without running the rest of the pipeline (frames, transcription, etc.).")
     args = parser.parse_args()
 
     video_path = args.video.expanduser().resolve()
     if not video_path.exists():
-        print(f"Erreur : fichier introuvable : {video_path}", file=sys.stderr)
+        print(f"Error: file not found: {video_path}", file=sys.stderr)
         sys.exit(1)
 
     output_dir = args.output_dir or video_path.parent / f"{video_path.stem}_meeting"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.extract_audio_only:
-        print(f"Vidéo    : {video_path}")
-        print(f"Sortie   : {output_dir}")
+        print(f"Video    : {video_path}")
+        print(f"Output   : {output_dir}")
         print()
-        print("Extraction de la piste audio...")
+        print("Extracting the audio track...")
         wav_path = extract_audio(video_path, output_dir)
         print(f"  → {wav_path}")
         return
 
     temp_dir = video_temp_dir(video_path)
 
-    print(f"Vidéo    : {video_path}")
-    print(f"Sortie   : {output_dir}")
+    print(f"Video    : {video_path}")
+    print(f"Output   : {output_dir}")
     print(f"Temp     : {temp_dir}")
-    print(f"Seuil    : {args.scene_threshold}")
+    print(f"Threshold: {args.scene_threshold}")
     print()
 
-    # Suppression des sorties des étapes à relancer
+    # Delete the outputs of the steps to rerun
     participants_json = output_dir / f"{video_path.stem}_participants.json"
     step_outputs = {
         2: [output_dir / f"{video_path.stem}_frames_analyzed.json"],
@@ -890,85 +892,85 @@ def main():
                 for path in paths:
                     if path.exists():
                         path.unlink()
-                        print(f"  ↺ étape {step} : {path.name} supprimé")
+                        print(f"  ↺ step {step}: {path.name} deleted")
     elif args.only_step:
         for path in step_outputs.get(args.only_step, []):
             if path.exists():
                 path.unlink()
-                print(f"  ↺ étape {args.only_step} : {path.name} supprimé")
+                print(f"  ↺ step {args.only_step}: {path.name} deleted")
 
     if not args.lexicon:
-        print("⚠️  Aucun lexique fourni (--lexicon). L'étape 6 de correction sera ignorée,")
-        print("   la retranscription sera moins propre (noms propres, termes métier non corrigés).")
+        print("⚠️  No lexicon provided (--lexicon). Step 6 (write-up) will be skipped,")
+        print("   and names and domain terms in the transcript won't be corrected.")
         try:
-            answer = input("   Continuer sans lexique ? [y/N] : ").strip("\r\n \t").lower()
+            answer = input("   Continue without a lexicon? [y/N]: ").strip("\r\n \t").lower()
         except (EOFError, KeyboardInterrupt):
             sys.exit(0)
         if answer != "y":
-            print("Abandon. Relancez avec --lexicon <fichier>.")
+            print("Aborted. Rerun with --lexicon <file>.")
             sys.exit(0)
         print()
 
-    # Étape 1 — extraction des frames clés (seulement si l'étape 2 n'est pas déjà en
-    # cache : ré-extraire du fichier vidéo est inutile si l'analyse existe déjà).
+    # Step 1 — keyframe extraction (only if step 2 isn't already cached:
+    # re-extracting from the video is pointless if the analysis already exists).
     analyzed_json = output_dir / f"{video_path.stem}_frames_analyzed.json"
     if analyzed_json.exists():
-        print("Étape 1 : ignorée, l'analyse (étape 2) est déjà en cache.")
+        print("Step 1: skipped, the analysis (step 2) is already cached.")
     else:
         frames_json = temp_dir / "frames.json"
         if frames_json.exists():
-            print("Étape 1 : frames déjà extraites, chargement...")
+            print("Step 1: frames already extracted, loading...")
             frames = json.loads(frames_json.read_text())
         else:
-            print("Étape 1 : extraction une frame toutes les 5s + déduplication dhash...")
+            print("Step 1: extracting one frame every 5s + dhash deduplication...")
             frames = extract_interval_frames(video_path, temp_dir / "frames")
             frames_json.write_text(json.dumps(frames, indent=2, ensure_ascii=False))
             print(f"  → {frames_json}")
     print()
 
-    # Étape 2 — analyse vision de chaque frame
+    # Step 2 — vision analysis of each frame
     if analyzed_json.exists():
-        print("Étape 2 : frames déjà analysées, chargement...")
+        print("Step 2: frames already analyzed, loading...")
         analyzed = json.loads(analyzed_json.read_text())
     else:
-        print(f"Étape 2 : analyse vision des {len(frames)} frames...")
+        print(f"Step 2: vision analysis of {len(frames)} frames...")
         analyzed = analyze_frames(frames, analyzed_json)
         projected = sum(1 for f in analyzed if f.get("shared_content"))
-        print(f"  → {projected}/{len(analyzed)} frames avec contenu projeté")
+        print(f"  → {projected}/{len(analyzed)} frames with shared content")
         print(f"  → {analyzed_json}")
     print()
 
-    # Étape 3 — transcription (argmax-cli ou fallback cloud)
+    # Step 3 — transcription (argmax-cli or cloud fallback)
     transcript_raw = output_dir / f"{video_path.stem}_transcript_raw.txt"
     if transcript_raw.exists():
-        print("Étape 3 : transcription déjà effectuée, chargement...")
+        print("Step 3: transcription already done, loading...")
     else:
-        print("Étape 3 : transcription + diarisation...")
+        print("Step 3: transcription + diarization...")
         transcribe_video(video_path, transcript_raw, output_dir, language=args.language, num_speakers=args.speakers,
                          force_cloud=args.cloud, model=args.model)
         print(f"  → {transcript_raw}")
     print()
 
-    # Étape 4 — identification des locuteurs
+    # Step 4 — speaker identification
     speaker_map_json = output_dir / f"{video_path.stem}_speaker_map.json"
     known_roster: list[str] = []
     if args.revalidate:
         if not speaker_map_json.exists():
-            print(f"Erreur : --revalidate nécessite une identification existante ({speaker_map_json.name} introuvable).",
+            print(f"Error: --revalidate requires an existing identification ({speaker_map_json.name} not found).",
                   file=sys.stderr)
-            print("Lancez d'abord le script sans --revalidate.", file=sys.stderr)
+            print("Run the command without --revalidate first.", file=sys.stderr)
             sys.exit(1)
-        print("Étape 4 : re-validation manuelle (identification existante rechargée, aucun appel cloud)...")
+        print("Step 4: manual re-validation (existing identification reloaded, no API calls)...")
         speakers_map = json.loads(speaker_map_json.read_text())
         if participants_json.exists():
             known_roster = json.loads(participants_json.read_text())
         needs_validation = True
     elif speaker_map_json.exists():
-        print("Étape 4 : locuteurs déjà identifiés, chargement...")
+        print("Step 4: speakers already identified, loading...")
         speakers_map = json.loads(speaker_map_json.read_text())
         needs_validation = False
     else:
-        print("Étape 4 : identification des locuteurs...")
+        print("Step 4: identifying speakers...")
         speakers_map, known_roster = identify_speakers(video_path, transcript_raw, speaker_map_json, temp_dir / "frames")
         participants_json.write_text(json.dumps(known_roster, indent=2, ensure_ascii=False))
         print(f"  → {speaker_map_json}")
@@ -977,7 +979,7 @@ def main():
     for spk, name in speakers_map.items():
         print(f"  {spk} → {name}")
 
-    # Validation interactive (uniquement après une identification fraîche)
+    # Interactive validation (only after a fresh identification or --revalidate)
     if needs_validation:
         all_segments = parse_segments(transcript_raw)
         old_map = dict(speakers_map)
@@ -987,34 +989,34 @@ def main():
         report_invalidated = False
     print()
 
-    # Étape 5 — génération de la timeline markdown
+    # Step 5 — markdown timeline generation
     timeline_md = output_dir / f"{video_path.stem}_timeline.md"
     if timeline_md.exists() and not report_invalidated:
-        print("Étape 5 : timeline déjà générée.")
+        print("Step 5: timeline already generated.")
     else:
-        print("Étape 5 : génération de la timeline...")
+        print("Step 5: generating the timeline...")
         generate_timeline(analyzed, transcript_raw, speakers_map, timeline_md)
     print()
 
-    # Étape 6 — compte-rendu de réunion (synthèse LLM + lexique)
+    # Step 6 — meeting minutes (LLM write-up + lexicon)
     minutes_md = output_dir / f"{video_path.stem}_minutes.md"
     lexicon_path = Path(args.lexicon).expanduser().resolve() if args.lexicon else None
     if args.only_step and args.only_step != 6:
-        print("Étape 6 : ignorée (--only-step).")
+        print("Step 6: skipped (--only-step).")
     elif minutes_md.exists():
-        print("Étape 6 : compte-rendu déjà généré.")
+        print("Step 6: minutes already generated.")
     elif lexicon_path is None or not lexicon_path.exists():
-        print("Étape 6 : ignorée (pas de lexique fourni via --lexicon).")
+        print("Step 6: skipped (no lexicon provided via --lexicon).")
     else:
-        print("Étape 6 : génération du compte-rendu...")
+        print("Step 6: generating the minutes...")
         generate_minutes(timeline_md, lexicon_path, minutes_md, max_blocks=args.max_clean_blocks)
     print()
 
-    # Nettoyage — le rapport final est généré, les frames extraites ne servent plus
+    # Cleanup — the final report is written, the extracted frames are no longer needed
     if args.clean:
         cleanup_temp_files(temp_dir)
     else:
-        print(f"  Fichiers temporaires conservés ({temp_dir}) — relancez avec --clean pour les supprimer.")
+        print(f"  Temporary files kept ({temp_dir}) — rerun with --clean to delete them.")
 
 
 if __name__ == "__main__":

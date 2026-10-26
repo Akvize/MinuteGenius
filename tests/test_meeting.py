@@ -14,8 +14,8 @@ from minutegenius.meeting import (
 
 
 def test_analyze_frame_tolerates_unescaped_control_char_in_string(monkeypatch, tmp_path):
-    """Le modèle vision insère parfois un vrai retour à la ligne dans une valeur de string
-    au lieu de l'échapper en \\n, ce qui casse json.loads en mode strict."""
+    """The vision model sometimes inserts a real newline in a string value instead of
+    escaping it as \\n, which breaks json.loads in strict mode."""
     raw_content = (
         '{"shared_content": true, "clearly_visible": "Titre\ndetails", "partially_visible": null}'
     )
@@ -31,7 +31,7 @@ def test_analyze_frame_tolerates_unescaped_control_char_in_string(monkeypatch, t
     monkeypatch.setenv("AI_MODEL_IMAGE", "fake-model")
 
     image_path = tmp_path / "frame.jpg"
-    image_path.write_bytes(b"\xff\xd8\xff\xd9")  # JPEG minimal valide pour read_bytes()
+    image_path.write_bytes(b"\xff\xd8\xff\xd9")  # minimal valid JPEG for read_bytes()
 
     result = analyze_frame(image_path)
 
@@ -117,8 +117,8 @@ def test_wav_is_valid_false_for_zero_duration(monkeypatch, tmp_path):
 
 
 def test_validate_speakers_interactive_accepts_free_text_name(monkeypatch, tmp_path):
-    """Un participant absent de la liste proposée (jamais isolé comme locuteur principal
-    par le modèle vision) doit pouvoir être saisi librement plutôt que rejeté."""
+    """A participant missing from the proposed list (never singled out as a main speaker
+    by the vision model) can be typed in freely instead of being rejected."""
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: None)
     answers = iter(["Anthime Ferrieu"])
     monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
@@ -133,8 +133,8 @@ def test_validate_speakers_interactive_accepts_free_text_name(monkeypatch, tmp_p
 
 
 def test_validate_speakers_interactive_lists_known_roster_as_menu_option(monkeypatch, tmp_path, capsys):
-    """Les participants vus sur les vignettes mais jamais retenus comme locuteur principal
-    (known_roster) doivent apparaître dans le menu numéroté, pas seulement en saisie libre."""
+    """Participants seen on the tiles but never picked as a main speaker (known_roster)
+    must appear in the numbered menu, not only as free-text input."""
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: None)
     monkeypatch.setattr("builtins.input", lambda prompt: "2")
 

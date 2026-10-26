@@ -295,7 +295,7 @@ def test_transcribe_cloud_forced_message_does_not_claim_local_transcriber_missin
         stt_backend.transcribe_cloud(audio_path, None, forced=True)
 
     out = capsys.readouterr().out
-    assert "introuvable" not in out
+    assert "not found" not in out
     assert "--cloud" in out
 
 

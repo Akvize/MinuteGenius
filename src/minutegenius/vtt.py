@@ -1,5 +1,5 @@
 """
-Convertit un fichier de sous-titres WebVTT (.vtt) en Markdown.
+Convert a WebVTT (.vtt) subtitle file to Markdown.
 Usage: python vtt.py transcript.vtt [--output out.md]
 """
 import argparse
@@ -14,7 +14,7 @@ TIMESTAMP_RE = re.compile(
 )
 VOICE_TAG_RE = re.compile(r"<v(?:\.[^ >]+)*\s+([^>]*)>")
 TAG_RE = re.compile(r"<[^>]*>")
-PARAGRAPH_GAP = 4.0  # secondes : au-delà, on saute un paragraphe (sous-titres sans locuteur)
+PARAGRAPH_GAP = 4.0  # seconds: beyond this gap, start a new paragraph (subtitles without speakers)
 
 
 @dataclass
@@ -67,7 +67,7 @@ def parse_vtt(content: str) -> list[Cue]:
                 ts_line_idx = i
                 break
         if ts_line_idx is None:
-            continue  # bloc d'en-tête (WEBVTT, NOTE, STYLE...) ou identifiant sans timestamp
+            continue  # header block (WEBVTT, NOTE, STYLE...) or identifier without a timestamp
 
         match = TIMESTAMP_RE.search(lines[ts_line_idx])
         start = parse_timestamp(match.group("start"))
@@ -86,8 +86,8 @@ def parse_vtt(content: str) -> list[Cue]:
         if not text:
             continue
 
-        # Sous-titres auto-générés : la même phrase peut se répéter cue après cue
-        # pendant l'affichage progressif (karaoke). On ignore le doublon exact.
+        # Auto-generated subtitles: the same sentence may repeat cue after cue
+        # during progressive display (karaoke). Skip exact duplicates.
         if cues and cues[-1].speaker == speaker and cues[-1].text == text:
             cues[-1].end = end
             continue
@@ -126,14 +126,14 @@ def build_markdown(cues: list[Cue]) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convertit un fichier WebVTT (.vtt) en Markdown.")
-    parser.add_argument("source", help="Fichier .vtt source")
-    parser.add_argument("--output", "-o", default=None, help="Fichier ou dossier de sortie")
+    parser = argparse.ArgumentParser(description="Convert a WebVTT (.vtt) file to Markdown.")
+    parser.add_argument("source", help="Source .vtt file")
+    parser.add_argument("--output", "-o", default=None, help="Output file or directory")
     args = parser.parse_args()
 
     src = Path(args.source)
     if not src.exists():
-        print(f"❌ Fichier introuvable : {src}", file=sys.stderr)
+        print(f"❌ File not found: {src}", file=sys.stderr)
         sys.exit(1)
 
     out_arg = Path(args.output) if args.output else None
@@ -144,15 +144,15 @@ def main():
     else:
         out_path = out_arg
 
-    print(f"📄 Extraction : {src} …")
+    print(f"📄 Reading: {src} …")
     cues = parse_vtt(src.read_text(encoding="utf-8"))
     if not cues:
-        print("❌ Aucun cue trouvé dans le fichier VTT.", file=sys.stderr)
+        print("❌ No cues found in the VTT file.", file=sys.stderr)
         sys.exit(1)
 
     markdown = build_markdown(cues)
     out_path.write_text(markdown, encoding="utf-8")
-    print(f"✅ Terminé → {out_path} ({len(cues)} cue(s))")
+    print(f"✅ Done → {out_path} ({len(cues)} cue(s))")
 
 
 if __name__ == "__main__":

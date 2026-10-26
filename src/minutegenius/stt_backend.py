@@ -1,11 +1,18 @@
 """
-Backend de transcription : WhisperKit (local, Mac) si disponible, sinon
-fallback cloud pyannote.ai — transcription + diarisation en un seul appel
-(STT Orchestration) — voir transcribe_cloud(). Le cloud peut aussi être
-forcé explicitement via transcribe_audio(force_cloud=True), même si
-WhisperKit est disponible.
+Backend de transcription : argmax-cli en local (argmax-oss-swift : WhisperKit +
+SpeakerKit, Mac Apple Silicon) si disponible, sinon fallback cloud pyannote.ai —
+transcription + diarisation en un seul appel (STT Orchestration) — voir
+transcribe_cloud(). Le cloud peut aussi être forcé explicitement via
+transcribe_audio(force_cloud=True), même si un transcripteur local est disponible.
+
+`argmax-cli` et `whisperkit-cli` sont le même binaire (cible ArgmaxCLI du dépôt
+argmax-oss-swift) : mêmes flags, même sortie RTTM étendue :
+    SPEAKER <fichier> 1 <start> <durée> <texte…> <NA> <A|B|…> <NA> <NA>
+On préfère `argmax-cli` (build depuis les sources) et on retombe sur
+`whisperkit-cli` (Homebrew) s'il n'est pas installé.
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,8 +36,59 @@ class Segment:
     text: str
 
 
-def whisperkit_available() -> bool:
-    return shutil.which("whisperkit-cli") is not None
+LOCAL_TRANSCRIBER_CANDIDATES = ("argmax-cli", "whisperkit-cli")
+
+
+def find_local_transcriber() -> str | None:
+    """Premier transcripteur local présent dans le PATH (argmax-cli, puis whisperkit-cli)."""
+    for name in LOCAL_TRANSCRIBER_CANDIDATES:
+        if shutil.which(name):
+            return name
+    return None
+
+
+def local_transcriber_available() -> bool:
+    return find_local_transcriber() is not None
+
+
+def build_transcribe_cmd(
+    transcriber: str,
+    audio_path: Path,
+    language: str | None,
+    num_speakers: int | None = None,
+    model: str | None = None,
+) -> list[str]:
+    """Commande de transcription avec diarisation.
+
+    language : code langue ("fr", "en"…) ; "auto" ou None = détection automatique
+    (on omet --language, utile pour les réunions bilingues FR/EN).
+    """
+    cmd = [
+        transcriber, "transcribe",
+        "--audio-path", str(audio_path),
+        "--diarization",
+        "--skip-special-tokens",
+    ]
+    if language and language.lower() != "auto":
+        cmd += ["--language", language]
+    if model:
+        cmd += ["--model", model]
+    if num_speakers:
+        cmd += ["--diarization-num-speakers", str(num_speakers)]
+    return cmd
+
+
+_HYPHEN_SPACE = re.compile(r"(?<=\w) -(?=\w)")
+
+
+def clean_text(text: str) -> str:
+    """Corrige les espaces parasites de la tokenisation Whisper.
+
+    "J 'ai" -> "J'ai", "Est -ce" -> "Est-ce", "C'est -à -dire" -> "C'est-à-dire".
+    Les tirets de dialogue ("- Tu réponds?") et les tirets espacés ("a - b") sont conservés.
+    """
+    text = text.replace(" '", "'")
+    return _HYPHEN_SPACE.sub("-", text)
 
 
 def _spinner(stop_event: threading.Event):
@@ -46,20 +104,12 @@ def _spinner(stop_event: threading.Event):
     print("\r" + " " * 30 + "\r", end="", flush=True)
 
 
-def run_whisperkit(audio_path: Path, language: str, num_speakers: int | None, model: str | None) -> str:
-    cmd = [
-        "whisperkit-cli", "transcribe",
-        "--audio-path", str(audio_path),
-        "--language", language,
-        "--diarization",
-        "--skip-special-tokens",
-    ]
-    if model:
-        cmd += ["--model", model]
-    if num_speakers:
-        cmd += ["--diarization-num-speakers", str(num_speakers)]
+def run_local_transcriber(
+    transcriber: str, audio_path: Path, language: str | None, num_speakers: int | None, model: str | None,
+) -> str:
+    cmd = build_transcribe_cmd(transcriber, audio_path, language, num_speakers, model)
 
-    print(f"Transcription de {audio_path.name}...")
+    print(f"Transcription de {audio_path.name} ({transcriber})...")
     stop = threading.Event()
     t = threading.Thread(target=_spinner, args=(stop,), daemon=True)
     t.start()
@@ -81,7 +131,7 @@ def run_whisperkit(audio_path: Path, language: str, num_speakers: int | None, mo
 
 
 def format_as_whisperkit_lines(segments: list[Segment], audio_filename: str) -> str:
-    """Sérialise des segments au format texte brut de WhisperKit, pour rester
+    """Sérialise des segments au format texte brut d'argmax-cli/whisperkit-cli, pour rester
     compatible avec parse_diarization_output()/_parse_speaker_line() existants."""
     lines = []
     for seg in segments:
@@ -188,7 +238,7 @@ def transcribe_cloud(audio_path: Path, num_speakers: int | None, *, forced: bool
     if forced:
         print("Transcription cloud demandée (--cloud) — pyannote.ai (transcription + diarisation)...")
     else:
-        print("whisperkit-cli introuvable — bascule sur le fallback cloud (pyannote.ai, transcription + diarisation)...")
+        print("argmax-cli / whisperkit-cli introuvable — bascule sur le fallback cloud (pyannote.ai, transcription + diarisation)...")
     segments = transcribe_pyannote(audio_path, num_speakers)
     if not segments:
         print("Erreur : aucun segment de transcription obtenu (audio vide ou silencieux ?).", file=sys.stderr)
@@ -197,14 +247,15 @@ def transcribe_cloud(audio_path: Path, num_speakers: int | None, *, forced: bool
 
 
 def transcribe_audio(
-    audio_path: Path, language: str, num_speakers: int | None, model: str | None, force_cloud: bool = False,
+    audio_path: Path, language: str | None, num_speakers: int | None, model: str | None, force_cloud: bool = False,
 ) -> str:
-    """Point d'entrée unique : WhisperKit si disponible, sinon fallback cloud.
+    """Point d'entrée unique : argmax-cli / whisperkit-cli si disponible, sinon fallback cloud.
 
-    force_cloud=True force le cloud même si whisperkit-cli est disponible localement.
+    force_cloud=True force le cloud même si un transcripteur local est disponible.
     """
     if force_cloud:
         return transcribe_cloud(audio_path, num_speakers, forced=True)
-    if whisperkit_available():
-        return run_whisperkit(audio_path, language, num_speakers, model)
+    transcriber = find_local_transcriber()
+    if transcriber:
+        return run_local_transcriber(transcriber, audio_path, language, num_speakers, model)
     return transcribe_cloud(audio_path, num_speakers)

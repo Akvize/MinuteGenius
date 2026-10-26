@@ -7,14 +7,53 @@ from minutegenius.stt_backend import Segment, format_as_whisperkit_lines
 from minutegenius.transcribe import parse_diarization_output
 
 
-def test_whisperkit_available_true(monkeypatch):
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/local/bin/whisperkit-cli")
-    assert stt_backend.whisperkit_available() is True
+def test_find_local_transcriber_prefers_argmax_cli(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: f"/opt/homebrew/bin/{name}")
+    assert stt_backend.find_local_transcriber() == "argmax-cli"
+    assert stt_backend.local_transcriber_available() is True
 
 
-def test_whisperkit_available_false(monkeypatch):
+def test_find_local_transcriber_falls_back_to_whisperkit_cli(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/local/bin/whisperkit-cli" if name == "whisperkit-cli" else None)
+    assert stt_backend.find_local_transcriber() == "whisperkit-cli"
+
+
+def test_find_local_transcriber_none(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: None)
-    assert stt_backend.whisperkit_available() is False
+    assert stt_backend.find_local_transcriber() is None
+    assert stt_backend.local_transcriber_available() is False
+
+
+def test_build_transcribe_cmd_auto_language_omits_flag(tmp_path):
+    cmd = stt_backend.build_transcribe_cmd("argmax-cli", tmp_path / "a.wav", "auto")
+    assert cmd[:2] == ["argmax-cli", "transcribe"]
+    assert "--diarization" in cmd
+    assert "--language" not in cmd
+
+
+def test_build_transcribe_cmd_none_language_omits_flag(tmp_path):
+    assert "--language" not in stt_backend.build_transcribe_cmd("argmax-cli", tmp_path / "a.wav", None)
+
+
+def test_build_transcribe_cmd_explicit_options(tmp_path):
+    cmd = stt_backend.build_transcribe_cmd(
+        "whisperkit-cli", tmp_path / "a.wav", "fr", num_speakers=3, model="large-v3-v20240930_626MB",
+    )
+    assert cmd[0] == "whisperkit-cli"
+    assert cmd[cmd.index("--language") + 1] == "fr"
+    assert cmd[cmd.index("--model") + 1] == "large-v3-v20240930_626MB"
+    assert cmd[cmd.index("--diarization-num-speakers") + 1] == "3"
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("J 'ai vu", "J'ai vu"),
+    ("Est -ce que", "Est-ce que"),
+    ("C'est -à -dire", "C'est-à-dire"),
+    ("- Tu réponds?", "- Tu réponds?"),
+    ("a - b", "a - b"),
+])
+def test_clean_text(raw, expected):
+    assert stt_backend.clean_text(raw) == expected
 
 
 def test_format_as_whisperkit_lines_roundtrips_through_existing_parser():
@@ -208,17 +247,19 @@ def test_transcribe_pyannote_defaults_missing_speaker_to_speaker_00(monkeypatch,
     assert result == [Segment(start=0.0, end=1.0, speaker="SPEAKER_00", text="overlap")]
 
 
-def test_transcribe_audio_uses_whisperkit_when_available(monkeypatch, tmp_path):
-    monkeypatch.setattr(stt_backend, "whisperkit_available", lambda: True)
-    monkeypatch.setattr(stt_backend, "run_whisperkit", lambda *a, **kw: "WHISPERKIT_OUTPUT")
+def test_transcribe_audio_uses_local_transcriber_when_available(monkeypatch, tmp_path):
+    monkeypatch.setattr(stt_backend, "find_local_transcriber", lambda: "argmax-cli")
+    calls = []
+    monkeypatch.setattr(stt_backend, "run_local_transcriber", lambda *a, **kw: calls.append(a) or "LOCAL_OUTPUT")
 
-    result = stt_backend.transcribe_audio(tmp_path / "a.wav", "fr", None, None)
+    result = stt_backend.transcribe_audio(tmp_path / "a.wav", "auto", None, None)
 
-    assert result == "WHISPERKIT_OUTPUT"
+    assert result == "LOCAL_OUTPUT"
+    assert calls == [("argmax-cli", tmp_path / "a.wav", "auto", None, None)]
 
 
-def test_transcribe_audio_falls_back_to_cloud_when_whisperkit_missing(monkeypatch, tmp_path):
-    monkeypatch.setattr(stt_backend, "whisperkit_available", lambda: False)
+def test_transcribe_audio_falls_back_to_cloud_when_no_local_transcriber(monkeypatch, tmp_path):
+    monkeypatch.setattr(stt_backend, "find_local_transcriber", lambda: None)
     monkeypatch.setattr(stt_backend, "transcribe_cloud", lambda *a, **kw: "CLOUD_OUTPUT")
 
     result = stt_backend.transcribe_audio(tmp_path / "a.wav", "fr", 3, None)
@@ -226,11 +267,11 @@ def test_transcribe_audio_falls_back_to_cloud_when_whisperkit_missing(monkeypatc
     assert result == "CLOUD_OUTPUT"
 
 
-def test_transcribe_audio_force_cloud_skips_whisperkit_even_when_available(monkeypatch, tmp_path):
-    monkeypatch.setattr(stt_backend, "whisperkit_available", lambda: True)
+def test_transcribe_audio_force_cloud_skips_local_transcriber_even_when_available(monkeypatch, tmp_path):
+    monkeypatch.setattr(stt_backend, "find_local_transcriber", lambda: "argmax-cli")
     monkeypatch.setattr(
-        stt_backend, "run_whisperkit",
-        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("run_whisperkit should not be called")),
+        stt_backend, "run_local_transcriber",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("run_local_transcriber should not be called")),
     )
     calls = []
     monkeypatch.setattr(
@@ -244,7 +285,7 @@ def test_transcribe_audio_force_cloud_skips_whisperkit_even_when_available(monke
     assert calls == [((tmp_path / "a.wav", 3), {"forced": True})]
 
 
-def test_transcribe_cloud_forced_message_does_not_claim_whisperkit_missing(monkeypatch, tmp_path, capsys):
+def test_transcribe_cloud_forced_message_does_not_claim_local_transcriber_missing(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PYANNOTE_API_KEY", "test-key")
     audio_path = tmp_path / "audio.wav"
     audio_path.write_bytes(b"fake")

@@ -8,7 +8,7 @@ requires-python = ">=3.11"
 authors = [
     { name = "Akvize" },
 ]
-keywords = ["meeting", "minutes", "transcription", "diarization", "whisperkit", "llm"]
+keywords = ["meeting", "minutes", "transcription", "diarization", "whisperkit", "argmax", "llm"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

@@ -149,7 +149,7 @@ def _wav_is_valid(wav_path: Path) -> bool:
 
 
 def extract_audio(video_path: Path, temp_dir: Path) -> Path:
-    """Extrait la piste audio en WAV 16kHz mono pour WhisperKit."""
+    """Extrait la piste audio en WAV 16kHz mono pour argmax-cli."""
     wav_path = temp_dir / f"{video_path.stem}.wav"
     if wav_path.exists():
         if _wav_is_valid(wav_path):
@@ -165,14 +165,14 @@ def extract_audio(video_path: Path, temp_dir: Path) -> Path:
 
 
 def transcribe_video(
-    video_path: Path, output_path: Path, temp_dir: Path, language: str = "fr", num_speakers: int | None = None,
-    force_cloud: bool = False,
+    video_path: Path, output_path: Path, temp_dir: Path, language: str = "auto", num_speakers: int | None = None,
+    force_cloud: bool = False, model: str | None = None,
 ) -> str:
-    """Extrait l'audio puis lance la transcription+diarisation (WhisperKit ou fallback cloud). Sauvegarde la sortie brute."""
+    """Extrait l'audio puis lance la transcription+diarisation (argmax-cli ou fallback cloud). Sauvegarde la sortie brute."""
     wav_path = extract_audio(video_path, temp_dir)
     print(f"  Audio extrait : {wav_path}")
 
-    raw = stt_backend.transcribe_audio(wav_path, language, num_speakers, model=None, force_cloud=force_cloud)
+    raw = stt_backend.transcribe_audio(wav_path, language, num_speakers, model=model, force_cloud=force_cloud)
 
     output_path.write_text(raw, encoding="utf-8")
     return raw
@@ -181,7 +181,7 @@ def transcribe_video(
 def _parse_speaker_line(parts: list[str]) -> tuple[float, float, str, list[str]] | None:
     """Parse une ligne SPEAKER déjà splittée. Robuste aux noms de fichier avec espaces.
 
-    Format WhisperKit : SPEAKER <file (peut avoir des espaces)> <ch> <start> <dur> <texte…> <NA> <speaker> <NA> <NA>
+    Format argmax-cli / whisperkit-cli : SPEAKER <file (peut avoir des espaces)> <ch> <start> <dur> <texte…> <NA> <speaker> <NA> <NA>
     On cherche deux floats consécutifs depuis la position 1 (après "SPEAKER") — c'est start+dur.
     """
     # parts[-3] = speaker, parts[-1] et parts[-2] = NA, parts[-4] = NA
@@ -210,7 +210,7 @@ def _parse_speaker_line(parts: list[str]) -> tuple[float, float, str, list[str]]
 
 
 def parse_transcript(transcript_path: Path) -> list[dict]:
-    """Parse le transcript WhisperKit en liste de segments {speaker, start, end, text}."""
+    """Parse le transcript brut (argmax-cli / whisperkit-cli) en liste de segments {speaker, start, end, text}."""
     segments = []
     for line in transcript_path.read_text(encoding="utf-8").splitlines():
         if not line.startswith("SPEAKER"):
@@ -219,14 +219,14 @@ def parse_transcript(transcript_path: Path) -> list[dict]:
         if parsed is None:
             continue
         start, duration, speaker, text_parts = parsed
-        text = " ".join(text_parts).replace(" '", "'")
+        text = stt_backend.clean_text(" ".join(text_parts))
         if text.strip():
             segments.append({"speaker": speaker, "start": start, "end": start + duration, "text": text.strip()})
     return sorted(segments, key=lambda s: s["start"])
 
 
 def parse_segments(transcript_path: Path) -> dict[str, list[tuple[float, float]]]:
-    """Retourne {speaker: [(start, duration), ...]} depuis la sortie brute WhisperKit."""
+    """Retourne {speaker: [(start, duration), ...]} depuis la sortie brute argmax-cli / whisperkit-cli."""
     segments: dict[str, list[tuple[float, float]]] = {}
     for line in transcript_path.read_text(encoding="utf-8").splitlines():
         if not line.startswith("SPEAKER"):
@@ -405,7 +405,7 @@ def validate_speakers_interactive(
     # Liste de tous les noms connus (pour proposer un menu)
     all_names = [name for _, name in ordered]
 
-    # Restaurer le terminal en mode cooked (ffmpeg/whisperkit peuvent le laisser en raw)
+    # Restaurer le terminal en mode cooked (ffmpeg/argmax-cli peuvent le laisser en raw)
     try:
         subprocess.run(["stty", "sane"], check=False)
     except Exception:
@@ -785,10 +785,13 @@ def main():
                         help=f"Seuil de détection de scène ffmpeg (défaut: {DEFAULT_SCENE_THRESHOLD})")
     parser.add_argument("--output-dir", type=Path, default=None,
                         help="Répertoire de sortie (défaut: <video_stem>_meeting/)")
-    parser.add_argument("--language", default="fr", help="Langue pour la transcription (défaut: fr)")
+    parser.add_argument("--language", default="auto",
+                        help="Langue de transcription (fr, en…) ou 'auto' pour la détection automatique (défaut: auto)")
+    parser.add_argument("--model", default=None,
+                        help="Modèle Whisper, ex: large-v3-v20240930_626MB (auto si non spécifié)")
     parser.add_argument("--speakers", type=int, default=None, help="Nombre de locuteurs (auto si non spécifié)")
     parser.add_argument("--cloud", action="store_true",
-                        help="Force la transcription cloud (pyannote.ai) même si whisperkit-cli est disponible")
+                        help="Force la transcription cloud (pyannote.ai) même si argmax-cli/whisperkit-cli est disponible")
     parser.add_argument("--lexicon", type=str, default=None, help="Chemin vers le lexique markdown pour la correction (étape 6)")
     parser.add_argument("--max-clean-blocks", type=int, default=None, help="Nombre maximum de blocs à corriger (étape 6, pour test)")
     parser.add_argument("--from-step", type=int, default=None, metavar="N",
@@ -868,13 +871,14 @@ def main():
         print(f"  → {analyzed_json}")
     print()
 
-    # Étape 3 — transcription (WhisperKit ou fallback cloud)
+    # Étape 3 — transcription (argmax-cli ou fallback cloud)
     transcript_raw = output_dir / f"{video_path.stem}_transcript_raw.txt"
     if transcript_raw.exists():
         print("Étape 3 : transcription déjà effectuée, chargement...")
     else:
         print("Étape 3 : transcription + diarisation...")
-        transcribe_video(video_path, transcript_raw, temp_dir, language=args.language, num_speakers=args.speakers, force_cloud=args.cloud)
+        transcribe_video(video_path, transcript_raw, temp_dir, language=args.language, num_speakers=args.speakers, force_cloud=args.cloud,
+                         model=args.model)
         print(f"  → {transcript_raw}")
     print()
 

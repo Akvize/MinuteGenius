@@ -1,7 +1,7 @@
 [project]
 name = "minutegenius"
 version = "0.1.0"
-description = "Comptes-rendus de réunion intelligents à partir d'une simple vidéo : transcription, identification des locuteurs, contenu partagé à l'écran et rédaction structurée par IA."
+description = "Smart meeting minutes from a single video recording: transcription, speaker identification, shared-screen content and AI-structured write-up."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -55,6 +55,6 @@ line-length = 120
 # of the stricter checks (blind except, subprocess without check=, etc.) would
 # require real refactors rather than a lint pass.
 select = ["E", "F", "I", "W"]
-# Long lines are mostly French-language LLM prompt literals, not code smell —
+# Long lines are mostly LLM prompt literals, not code smell —
 # rewrapping them would hurt readability more than it helps.
 ignore = ["E501"]

@@ -1,9 +1,9 @@
 """
-Vérifie que l'environnement est prêt pour les commandes meeting/transcribe :
-dépendances système (ffmpeg, argmax-cli / whisperkit-cli), variables d'environnement
-requises, et connectivité aux APIs configurées (AI_API/AI_API2, pyannote.ai).
+Check that the environment is ready for the meeting/transcribe commands:
+system dependencies (ffmpeg, argmax-cli / whisperkit-cli), required environment
+variables, and connectivity to the configured APIs (AI_API/AI_API2, pyannote.ai).
 
-Usage: minutegenius check [--lexicon fichier.md]
+Usage: minutegenius check [--lexicon lexicon.md]
 """
 import argparse
 import os
@@ -25,19 +25,19 @@ from minutegenius.meeting import get_client, get_client_image
 
 
 def check_env_vars(*names: str) -> None:
-    """Vérifie que les variables d'environnement requises sont définies, avec message clair sinon."""
+    """Check that the required environment variables are set, with a clear message otherwise."""
     missing = [n for n in names if not os.environ.get(n)]
     if missing:
-        print(f"Erreur : variable(s) d'environnement manquante(s) : {', '.join(missing)}.", file=sys.stderr)
-        print("Renseignez-les dans votre .env (voir .env.example).", file=sys.stderr)
+        print(f"Error: missing environment variable(s): {', '.join(missing)}.", file=sys.stderr)
+        print("Set them in your .env (see .env.example).", file=sys.stderr)
         sys.exit(1)
 
 
 def check_ai_connection(client: OpenAI, model: str, label: str) -> None:
-    """Fait un appel minimal pour vérifier la connexion avant de lancer le pipeline complet.
+    """Make a minimal call to check the connection before running the full pipeline.
 
-    Évite de découvrir une clé invalide ou un endpoint injoignable après plusieurs
-    minutes d'extraction de frames/audio (voir analyze_frame, qui n'a pas de retry).
+    Avoids discovering an invalid key or unreachable endpoint after several minutes
+    of frame/audio extraction (see analyze_frame, which has no retry).
     """
     try:
         client.chat.completions.create(
@@ -46,24 +46,24 @@ def check_ai_connection(client: OpenAI, model: str, label: str) -> None:
             timeout=15,
         )
     except AuthenticationError:
-        print(f"Erreur : clé API invalide pour {label} (AI_KEY/AI_KEY2).", file=sys.stderr)
+        print(f"Error: invalid API key for {label} (AI_KEY/AI_KEY2).", file=sys.stderr)
         sys.exit(1)
     except NotFoundError:
-        print(f"Erreur : modèle '{model}' introuvable sur {label} (AI_MODEL_*).", file=sys.stderr)
+        print(f"Error: model '{model}' not found on {label} (AI_MODEL_*).", file=sys.stderr)
         sys.exit(1)
     except RateLimitError:
-        print(f"Avertissement : limite de débit atteinte lors du test de connexion à {label}, on continue.", file=sys.stderr)
+        print(f"Warning: rate limit hit while testing the connection to {label}, continuing.", file=sys.stderr)
     except APIConnectionError:
-        print(f"Erreur : impossible de joindre {label} ({client.base_url}).", file=sys.stderr)
-        print("Vérifiez AI_API/AI_API2 et votre connexion réseau.", file=sys.stderr)
+        print(f"Error: cannot reach {label} ({client.base_url}).", file=sys.stderr)
+        print("Check AI_API/AI_API2 and your network connection.", file=sys.stderr)
         sys.exit(1)
     except APIStatusError as e:
-        print(f"Erreur : {label} a répondu avec le statut {e.status_code} ({e.message}).", file=sys.stderr)
+        print(f"Error: {label} responded with status {e.status_code} ({e.message}).", file=sys.stderr)
         sys.exit(1)
 
 
 def check_pyannote_connection() -> None:
-    """Vérifie PYANNOTE_API_KEY via l'endpoint /test de pyannote.ai."""
+    """Check PYANNOTE_API_KEY using pyannote.ai's /test endpoint."""
     check_env_vars("PYANNOTE_API_KEY")
     try:
         resp = requests.get(
@@ -72,35 +72,35 @@ def check_pyannote_connection() -> None:
             timeout=stt_backend.PYANNOTE_HTTP_TIMEOUT_S,
         )
     except requests.RequestException as e:
-        print(f"Erreur : impossible de joindre pyannote.ai ({e}).", file=sys.stderr)
+        print(f"Error: cannot reach pyannote.ai ({e}).", file=sys.stderr)
         sys.exit(1)
     if resp.status_code == 401:
-        print("Erreur : clé API invalide pour pyannote.ai (PYANNOTE_API_KEY).", file=sys.stderr)
+        print("Error: invalid API key for pyannote.ai (PYANNOTE_API_KEY).", file=sys.stderr)
         sys.exit(1)
     if not resp.ok:
-        print(f"Erreur : pyannote.ai a répondu avec le statut {resp.status_code} ({resp.text}).", file=sys.stderr)
+        print(f"Error: pyannote.ai responded with status {resp.status_code} ({resp.text}).", file=sys.stderr)
         sys.exit(1)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Vérifie la configuration et la connectivité requises par meeting/transcribe"
+        description="Check the configuration and connectivity required by meeting/transcribe"
     )
     parser.add_argument("--lexicon", type=str, default=None,
-                        help="Vérifie aussi AI_MODEL_WRITER (utilisé par l'étape 6 de correction)")
+                        help="Also check AI_MODEL_WRITER (used by step 6, the write-up)")
     args = parser.parse_args()
 
-    print("Dépendances système :")
+    print("System dependencies:")
     for tool, required in (("ffmpeg", True), ("ffprobe", True), *((t, False) for t in stt_backend.LOCAL_TRANSCRIBER_CANDIDATES)):
         found = shutil.which(tool) is not None
         marker = "✓" if found else ("✗" if required else "–")
-        print(f"  {marker} {tool}{'' if found else ' (introuvable)' if required else ' (absent, optionnel)'}")
+        print(f"  {marker} {tool}{'' if found else ' (not found)' if required else ' (not installed, optional)'}")
         if required and not found:
-            print(f"Erreur : '{tool}' est requis mais introuvable sur le PATH.", file=sys.stderr)
+            print(f"Error: '{tool}' is required but was not found on PATH.", file=sys.stderr)
             sys.exit(1)
     print()
 
-    print("Connexion aux services IA (vision/écriture) :")
+    print("AI services (vision/writer):")
     check_env_vars("AI_KEY", "AI_API", "AI_MODEL_IMAGE")
     image_model = os.environ.get("AI_MODEL_IMAGE2") or os.environ["AI_MODEL_IMAGE"]
     image_label = "AI_API2 (vision)" if os.environ.get("AI_API2") else "AI_API (vision)"
@@ -113,10 +113,10 @@ def main() -> None:
         print(f"  ✓ AI_API (writer) ({os.environ['AI_MODEL_WRITER']})")
     print()
 
-    print("Transcription + diarisation :")
+    print("Transcription + diarization:")
     transcriber = stt_backend.find_local_transcriber()
     if transcriber:
-        print(f"  ✓ {transcriber} détecté (local) — le fallback cloud pyannote.ai ne sera pas utilisé.")
+        print(f"  ✓ {transcriber} found (local) — the pyannote.ai cloud fallback won't be used.")
     else:
         check_pyannote_connection()
         print("  ✓ pyannote.ai (PYANNOTE_API_KEY)")

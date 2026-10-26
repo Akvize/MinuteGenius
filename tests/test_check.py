@@ -7,7 +7,7 @@ from minutegenius import check
 
 def test_check_env_vars_passes_when_all_set(monkeypatch):
     monkeypatch.setenv("FOO", "bar")
-    check.check_env_vars("FOO")  # ne doit pas lever
+    check.check_env_vars("FOO")  # must not raise
 
 
 def test_check_env_vars_exits_when_missing(monkeypatch):
@@ -39,7 +39,7 @@ class _FakeClient:
 
 
 def test_check_ai_connection_passes_on_success():
-    check.check_ai_connection(_FakeClient(), "some-model", "AI_API (vision)")  # ne doit pas lever
+    check.check_ai_connection(_FakeClient(), "some-model", "AI_API (vision)")  # must not raise
 
 
 def test_check_ai_connection_exits_on_authentication_error():
@@ -56,8 +56,8 @@ def test_check_ai_connection_exits_on_not_found_error():
 
 def test_check_ai_connection_warns_but_continues_on_rate_limit_error(capsys):
     client = _FakeClient(_status_error(RateLimitError, 429))
-    check.check_ai_connection(client, "some-model", "AI_API (vision)")  # ne doit pas lever
-    assert "limite de débit" in capsys.readouterr().err
+    check.check_ai_connection(client, "some-model", "AI_API (vision)")  # must not raise
+    assert "rate limit" in capsys.readouterr().err
 
 
 class _FakeResponse:
@@ -70,7 +70,7 @@ class _FakeResponse:
 def test_check_pyannote_connection_passes_on_success(monkeypatch):
     monkeypatch.setenv("PYANNOTE_API_KEY", "test-key")
     monkeypatch.setattr(check.requests, "get", lambda url, headers=None, timeout=None: _FakeResponse(200))
-    check.check_pyannote_connection()  # ne doit pas lever
+    check.check_pyannote_connection()  # must not raise
 
 
 def test_check_pyannote_connection_exits_on_missing_key(monkeypatch):

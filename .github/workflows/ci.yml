@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     # Unit tests cover the pure parsing/formatting functions plus the cloud
     # transcription fallback in stt_backend.py (network and subprocess calls
-    # mocked) — none of it needs ffmpeg/whisperkit-cli or real API keys, so a
+    # mocked) — none of it needs ffmpeg/argmax-cli or real API keys, so a
     # Linux runner is enough even though argmax-cli itself is macOS-only
     # (see README).
     steps:

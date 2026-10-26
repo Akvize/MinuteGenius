@@ -778,19 +778,37 @@ def generate_minutes(timeline_path: Path, lexicon_path: Path, output_path: Path,
     print(f"  Sending the timeline to the LLM ({len(timeline)} characters)...", flush=True)
     for retry in range(MAX_RETRIES):
         try:
-            response = get_client().chat.completions.create(
+            # Streaming: without it the connection stays silent for the whole generation
+            # (several minutes for long minutes) and an intermediate proxy/load balancer
+            # ends up dropping it -> "Connection error.".
+            # max_retries=0: we handle retries ourselves (otherwise the SDK silently
+            # retries 2 more times on each attempt).
+            stream = get_client().with_options(max_retries=0).chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 timeout=API_TIMEOUT,
+                stream=True,
                 extra_body={"thinking": {"type": "disabled"}},
             )
-            result = response.choices[0].message.content.strip()
+            parts: list[str] = []
+            n_chunks = 0
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    parts.append(chunk.choices[0].delta.content)
+                    n_chunks += 1
+                    if n_chunks % 200 == 0:
+                        print(f"    … {sum(map(len, parts))} characters received", flush=True)
+            result = "".join(parts).strip()
+            if not result:
+                raise RuntimeError("empty response from the LLM")
             output_path.write_text(result, encoding="utf-8")
             print(f"  → {output_path}")
             return
         except Exception as e:
             if retry < MAX_RETRIES - 1:
-                print(f"    error ({retry+1}/{MAX_RETRIES}), retrying... {e}")
+                cause = e.__cause__ or e.__context__
+                detail = f" (cause: {type(cause).__name__}: {cause})" if cause else ""
+                print(f"    error ({retry+1}/{MAX_RETRIES}), retrying... {type(e).__name__}: {e}{detail}", flush=True)
                 time.sleep(5)
             else:
                 print(f"    failed after {MAX_RETRIES} attempts: {e}")

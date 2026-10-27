@@ -61,6 +61,8 @@ alone never states what the dashboard actually showed.
 
 ## How it works
 
+![How MinuteGenius works: the recording is split into what was shown and what was said, then merged into one timeline and written up as a report](docs/minutegenius-pipeline.svg)
+
 Given a meeting video, MinuteGenius runs a 6-step pipeline:
 
 1. **Keyframe extraction** — samples the video and dedupes near-identical
